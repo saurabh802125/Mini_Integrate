@@ -1,4 +1,4 @@
-// src/pages/Dashboard.tsx
+// src/pages/Dashboard.tsx - Complete Enhanced Dashboard
 
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -6,9 +6,26 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { coursesAPI, examsAPI } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { coursesAPI, examsAPI, uploadAPI } from "@/lib/api";
 import { useToast } from "@/components/ui/use-toast";
-import { Loader2, BookOpen, AlarmClock, FileText, PenLine, Pencil, LogOut } from "lucide-react";
+import { 
+  Loader2, 
+  BookOpen, 
+  AlarmClock, 
+  FileText, 
+  PenLine, 
+  LogOut, 
+  Upload, 
+  Database, 
+  TrendingUp,
+  CheckCircle,
+  Clock,
+  BarChart3,
+  Settings,
+  User
+} from "lucide-react";
 import NetworkGridBackground from "@/components/NetworkGridBackground";
 
 interface Course {
@@ -23,13 +40,31 @@ interface Exam {
   semester: string;
   course: Course;
   createdAt: string;
+  status?: string;
+}
+
+interface ProcessedUpload {
+  processId: string;
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  course: Course;
+  questionsCount: number;
+  topicsCount: number;
+  processedAt?: string;
+  createdAt: string;
 }
 
 const Dashboard = () => {
   const { currentUser, logout } = useAuth();
   const [courses, setCourses] = useState<Course[]>([]);
   const [exams, setExams] = useState<Exam[]>([]);
+  const [uploads, setUploads] = useState<ProcessedUpload[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [stats, setStats] = useState({
+    totalExams: 0,
+    totalUploads: 0,
+    completedUploads: 0,
+    totalQuestions: 0
+  });
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -37,18 +72,34 @@ const Dashboard = () => {
     const fetchData = async () => {
       try {
         setIsLoading(true);
-        // Fetch courses
-        const coursesResponse = await coursesAPI.getAllCourses();
-        setCourses(coursesResponse.data);
+        
+        // Fetch all data in parallel
+        const [coursesResponse, examsResponse, uploadsResponse] = await Promise.all([
+          coursesAPI.getAllCourses().catch(() => ({ data: [] })),
+          examsAPI.getEducatorExams().catch(() => ({ data: [] })),
+          uploadAPI.getMyUploads().catch(() => ({ data: [] }))
+        ]);
 
-        // Fetch exams
-        const examsResponse = await examsAPI.getEducatorExams();
+        setCourses(coursesResponse.data);
         setExams(examsResponse.data);
+        setUploads(uploadsResponse.data);
+
+        // Calculate statistics
+        const completedUploads = uploadsResponse.data.filter((u: ProcessedUpload) => u.status === 'COMPLETED');
+        const totalQuestions = completedUploads.reduce((sum: number, u: ProcessedUpload) => sum + u.questionsCount, 0);
+
+        setStats({
+          totalExams: examsResponse.data.length,
+          totalUploads: uploadsResponse.data.length,
+          completedUploads: completedUploads.length,
+          totalQuestions
+        });
+
       } catch (error) {
         console.error("Error fetching data:", error);
         toast({
-          title: "Error",
-          description: "Failed to load your data. Please try again.",
+          title: "Warning",
+          description: "Some data could not be loaded. Basic functionality is still available.",
           variant: "destructive",
         });
       } finally {
@@ -69,8 +120,55 @@ const Dashboard = () => {
   };
 
   const handleCreateExam = () => {
-    // Navigate to the exam type selection page
     navigate("/exam-type-selection");
+  };
+
+  const handleUploadDocuments = () => {
+    navigate("/upload-documents");
+  };
+
+  const handleViewExam = (examId: string) => {
+    // Navigate to exam details (you can implement this later)
+    toast({
+      title: "Feature coming soon",
+      description: "Exam details view will be available in the next update.",
+    });
+  };
+
+  const handleUseUploadData = (upload: ProcessedUpload) => {
+    navigate("/exam-type-selection", {
+      state: {
+        preSelectedCourse: upload.course.code,
+        hasQuestionBank: true,
+        fromUpload: true
+      }
+    });
+  };
+
+  const getTimeAgo = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) return "Today";
+    if (diffDays === 1) return "Yesterday";
+    if (diffDays < 7) return `${diffDays} days ago`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+    return `${Math.floor(diffDays / 30)} months ago`;
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'COMPLETED':
+        return <CheckCircle className="h-4 w-4 text-green-400" />;
+      case 'PROCESSING':
+        return <Clock className="h-4 w-4 text-yellow-400" />;
+      case 'FAILED':
+        return <Clock className="h-4 w-4 text-red-400" />;
+      default:
+        return <Clock className="h-4 w-4 text-gray-400" />;
+    }
   };
 
   if (isLoading) {
@@ -79,7 +177,7 @@ const Dashboard = () => {
         <div className="flex items-center justify-center min-h-screen">
           <div className="bg-black/40 backdrop-blur-sm p-8 rounded-lg border border-cyan-500/30">
             <Loader2 className="w-8 h-8 animate-spin text-cyan-400 mx-auto" />
-            <span className="mt-4 block text-white text-center">Loading...</span>
+            <span className="mt-4 block text-white text-center">Loading your dashboard...</span>
           </div>
         </div>
       </NetworkGridBackground>
@@ -89,45 +187,159 @@ const Dashboard = () => {
   return (
     <NetworkGridBackground>
       <div className="min-h-screen p-4 md:p-8">
-        <div className="max-w-6xl mx-auto space-y-6">
-          <div className="flex flex-col md:flex-row md:items-center justify-between backdrop-blur-sm bg-black/40 p-4 rounded-lg border border-cyan-500/20">
+        <div className="max-w-7xl mx-auto space-y-6">
+          
+          {/* Header Section */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between backdrop-blur-sm bg-black/40 p-6 rounded-lg border border-cyan-500/20">
             <div>
-              <h1 className="text-3xl font-bold text-white">Dashboard</h1>
-              <p className="text-cyan-200">Welcome back, {currentUser?.name}</p>
+              <h1 className="text-3xl font-bold text-white">Welcome back, {currentUser?.name}! 👋</h1>
+              <p className="text-cyan-200 mt-1">
+                Ready to create intelligent question papers? Let's get started.
+              </p>
             </div>
-            <Button 
-              variant="outline" 
-              onClick={handleLogout} 
-              className="mt-4 md:mt-0 bg-transparent border-cyan-500/50 text-cyan-100 hover:bg-cyan-900/30"
-            >
-              <LogOut className="w-4 h-4 mr-2" />
-              Logout
-            </Button>
+            <div className="flex items-center space-x-3 mt-4 md:mt-0">
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => navigate("/profile")}
+                className="bg-transparent border-cyan-500/50 text-cyan-100 hover:bg-cyan-900/30"
+              >
+                <User className="w-4 h-4 mr-2" />
+                Profile
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={handleLogout} 
+                className="bg-transparent border-cyan-500/50 text-cyan-100 hover:bg-cyan-900/30"
+              >
+                <LogOut className="w-4 h-4 mr-2" />
+                Logout
+              </Button>
+            </div>
+          </div>
+
+          {/* Quick Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card className="bg-black/40 border-cyan-400/30 backdrop-blur-sm shadow-lg">
+              <CardContent className="p-4">
+                <div className="flex items-center">
+                  <FileText className="h-8 w-8 text-cyan-400" />
+                  <div className="ml-3">
+                    <p className="text-sm font-medium text-cyan-200">Total Exams</p>
+                    <p className="text-2xl font-bold text-white">{stats.totalExams}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-black/40 border-green-400/30 backdrop-blur-sm shadow-lg">
+              <CardContent className="p-4">
+                <div className="flex items-center">
+                  <Database className="h-8 w-8 text-green-400" />
+                  <div className="ml-3">
+                    <p className="text-sm font-medium text-green-200">Question Banks</p>
+                    <p className="text-2xl font-bold text-white">{stats.completedUploads}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-black/40 border-purple-400/30 backdrop-blur-sm shadow-lg">
+              <CardContent className="p-4">
+                <div className="flex items-center">
+                  <BarChart3 className="h-8 w-8 text-purple-400" />
+                  <div className="ml-3">
+                    <p className="text-sm font-medium text-purple-200">Total Questions</p>
+                    <p className="text-2xl font-bold text-white">{stats.totalQuestions}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-black/40 border-yellow-400/30 backdrop-blur-sm shadow-lg">
+              <CardContent className="p-4">
+                <div className="flex items-center">
+                  <BookOpen className="h-8 w-8 text-yellow-400" />
+                  <div className="ml-3">
+                    <p className="text-sm font-medium text-yellow-200">My Courses</p>
+                    <p className="text-2xl font-bold text-white">{currentUser?.courses?.length || 0}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
           <Separator className="bg-cyan-500/20" />
 
-          {/* Create new exam card */}
-          <Card className="bg-black/40 border-cyan-400/30 backdrop-blur-sm shadow-lg">
-            <CardHeader>
-              <CardTitle className="flex items-center text-white">
-                <PenLine className="mr-2 h-5 w-5 text-cyan-400" />
-                Create New Exam
-              </CardTitle>
-              <CardDescription className="text-cyan-200">Start creating a new examination paper</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-cyan-100 mb-4">
-                Choose between Continuous Internal Evaluation (CIE) or Semester End Examination (SEE)
-                to generate a customized question paper for your course.
-              </p>
-              <Button onClick={handleCreateExam} className="w-full bg-cyan-600 hover:bg-cyan-500">
-                Create New Exam
-              </Button>
-            </CardContent>
-          </Card>
+          {/* Main Action Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            {/* Create New Exam Card */}
+            <Card className="bg-black/40 border-cyan-400/30 backdrop-blur-sm shadow-lg hover:shadow-xl transition-shadow">
+              <CardHeader>
+                <CardTitle className="flex items-center text-white">
+                  <PenLine className="mr-3 h-6 w-6 text-cyan-400" />
+                  Create New Question Paper
+                </CardTitle>
+                <CardDescription className="text-cyan-200">
+                  Generate CIE or SEE question papers with AI assistance
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-cyan-100 mb-4">
+                  Choose between <strong>Continuous Internal Evaluation (CIE)</strong> or 
+                  <strong> Semester End Examination (SEE)</strong> to create customized question papers 
+                  tailored to your course requirements.
+                </p>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <Badge variant="outline" className="text-cyan-200 border-cyan-500/30">CIE Format</Badge>
+                  <Badge variant="outline" className="text-cyan-200 border-cyan-500/30">SEE Format</Badge>
+                  <Badge variant="outline" className="text-cyan-200 border-cyan-500/30">AI Powered</Badge>
+                </div>
+              </CardContent>
+              <CardFooter>
+                <Button onClick={handleCreateExam} className="w-full bg-cyan-600 hover:bg-cyan-500" size="lg">
+                  <PenLine className="w-4 h-4 mr-2" />
+                  Start Creating Exam
+                </Button>
+              </CardFooter>
+            </Card>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Upload Documents Card */}
+            <Card className="bg-black/40 border-green-400/30 backdrop-blur-sm shadow-lg hover:shadow-xl transition-shadow">
+              <CardHeader>
+                <CardTitle className="flex items-center text-white">
+                  <Upload className="mr-3 h-6 w-6 text-green-400" />
+                  Upload Question Bank
+                </CardTitle>
+                <CardDescription className="text-green-200">
+                  Process your documents with AI for intelligent question selection
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-green-100 mb-4">
+                  Upload your <strong>question bank</strong> and <strong>syllabus PDFs</strong> to enable 
+                  smart question selection based on difficulty, topics, and Bloom taxonomy levels.
+                </p>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <Badge variant="outline" className="text-green-200 border-green-500/30">PDF Processing</Badge>
+                  <Badge variant="outline" className="text-green-200 border-green-500/30">ML Analysis</Badge>
+                  <Badge variant="outline" className="text-green-200 border-green-500/30">Smart Selection</Badge>
+                </div>
+              </CardContent>
+              <CardFooter>
+                <Button onClick={handleUploadDocuments} className="w-full bg-green-600 hover:bg-green-500" size="lg">
+                  <Database className="w-4 h-4 mr-2" />
+                  Upload & Process Documents
+                </Button>
+              </CardFooter>
+            </Card>
+          </div>
+
+          {/* Content Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* My Courses */}
             <Card className="bg-black/40 border-cyan-400/30 backdrop-blur-sm shadow-lg">
               <CardHeader>
                 <CardTitle className="flex items-center text-white">
@@ -138,22 +350,42 @@ const Dashboard = () => {
               </CardHeader>
               <CardContent>
                 {currentUser?.courses?.length > 0 ? (
-                  <ul className="space-y-2">
-                    {currentUser.courses.map((courseId: string) => {
+                  <div className="space-y-3">
+                    {currentUser.courses.slice(0, 5).map((courseId: string) => {
                       const course = courses.find(c => c._id === courseId);
                       return (
-                        <li key={courseId} className="p-2 bg-black/30 rounded-md border border-cyan-500/20 text-white">
-                          {course ? `${course.name} (${course.code})` : 'Unknown course'}
-                        </li>
+                        <div key={courseId} className="flex items-center justify-between p-3 bg-black/30 rounded-md border border-cyan-500/20">
+                          <div>
+                            <p className="text-white font-medium">
+                              {course ? course.name : 'Unknown Course'}
+                            </p>
+                            <p className="text-sm text-cyan-200">
+                              {course ? `Code: ${course.code}` : 'No code available'}
+                            </p>
+                          </div>
+                          <Badge variant="secondary" className="text-xs">
+                            Active
+                          </Badge>
+                        </div>
                       );
                     })}
-                  </ul>
+                    {currentUser.courses.length > 5 && (
+                      <p className="text-sm text-cyan-300 text-center">
+                        +{currentUser.courses.length - 5} more courses
+                      </p>
+                    )}
+                  </div>
                 ) : (
-                  <p className="text-cyan-200">No courses assigned yet</p>
+                  <div className="text-center py-6">
+                    <BookOpen className="h-12 w-12 mx-auto text-cyan-400/50 mb-2" />
+                    <p className="text-cyan-200">No courses assigned yet</p>
+                    <p className="text-sm text-cyan-300">Contact admin to assign courses</p>
+                  </div>
                 )}
               </CardContent>
             </Card>
 
+            {/* Recent Exams */}
             <Card className="bg-black/40 border-cyan-400/30 backdrop-blur-sm shadow-lg">
               <CardHeader>
                 <CardTitle className="flex items-center text-white">
@@ -164,75 +396,131 @@ const Dashboard = () => {
               </CardHeader>
               <CardContent>
                 {exams.length > 0 ? (
-                  <ul className="space-y-2">
-                    {exams.slice(0, 3).map((exam) => (
-                      <li key={exam._id} className="p-2 bg-black/30 rounded-md border border-cyan-500/20">
-                        <div className="font-medium text-white">{exam.examType} - {exam.course.code}</div>
-                        <div className="text-sm text-cyan-200">Semester: {exam.semester}</div>
-                      </li>
+                  <div className="space-y-3">
+                    {exams.slice(0, 4).map((exam) => (
+                      <div 
+                        key={exam._id} 
+                        className="p-3 bg-black/30 rounded-md border border-cyan-500/20 hover:bg-black/40 transition-colors cursor-pointer"
+                        onClick={() => handleViewExam(exam._id)}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-medium text-white">
+                              {exam.examType} - {exam.course.code}
+                            </p>
+                            <p className="text-sm text-cyan-200">
+                              Semester {exam.semester} • {getTimeAgo(exam.createdAt)}
+                            </p>
+                          </div>
+                          <Badge variant="outline" className="text-cyan-200 border-cyan-500/30">
+                            {exam.examType}
+                          </Badge>
+                        </div>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
                 ) : (
-                  <p className="text-cyan-200">No exams created yet</p>
+                  <div className="text-center py-6">
+                    <FileText className="h-12 w-12 mx-auto text-cyan-400/50 mb-2" />
+                    <p className="text-cyan-200">No exams created yet</p>
+                    <p className="text-sm text-cyan-300">Create your first exam to get started</p>
+                  </div>
                 )}
               </CardContent>
             </Card>
 
-            <Card className="bg-black/40 border-cyan-400/30 backdrop-blur-sm shadow-lg">
+            {/* Processed Question Banks */}
+            <Card className="bg-black/40 border-green-400/30 backdrop-blur-sm shadow-lg">
               <CardHeader>
                 <CardTitle className="flex items-center text-white">
-                  <FileText className="mr-2 h-5 w-5 text-cyan-400" />
-                  Generate Questions
+                  <Database className="mr-2 h-5 w-5 text-green-400" />
+                  Question Banks
                 </CardTitle>
-                <CardDescription className="text-cyan-200">Use AI to create exam questions</CardDescription>
+                <CardDescription className="text-green-200">Your processed documents</CardDescription>
               </CardHeader>
-              <CardContent className="pb-6">
-                <p className="text-cyan-100">
-                  Generate exam questions for your courses using our AI-powered tool.
-                  Questions are tailored to your course material and exam requirements.
-                </p>
+              <CardContent>
+                {uploads.length > 0 ? (
+                  <div className="space-y-3">
+                    {uploads.slice(0, 4).map((upload) => (
+                      <div key={upload.processId} className="p-3 bg-black/30 rounded-md border border-green-500/20">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center space-x-2">
+                            {getStatusIcon(upload.status)}
+                            <p className="font-medium text-white text-sm">
+                              {upload.course.name}
+                            </p>
+                          </div>
+                          <Badge variant={upload.status === 'COMPLETED' ? 'default' : 'secondary'} className="text-xs">
+                            {upload.status}
+                          </Badge>
+                        </div>
+                        {upload.status === 'COMPLETED' && (
+                          <>
+                            <p className="text-xs text-green-200 mb-2">
+                              {upload.questionsCount} questions • {upload.topicsCount} topics
+                            </p>
+                            <Button 
+                              size="sm" 
+                              onClick={() => handleUseUploadData(upload)}
+                              className="w-full bg-green-600 hover:bg-green-500 text-xs"
+                            >
+                              Create Question Paper
+                            </Button>
+                          </>
+                        )}
+                        {upload.status === 'PROCESSING' && (
+                          <p className="text-xs text-yellow-200">Processing documents...</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-6">
+                    <Upload className="h-12 w-12 mx-auto text-green-400/50 mb-2" />
+                    <p className="text-green-200">No documents uploaded</p>
+                    <p className="text-sm text-green-300">Upload question bank to get started</p>
+                  </div>
+                )}
               </CardContent>
-              <CardFooter>
-                <Button 
-                  className="w-full bg-cyan-600 hover:bg-cyan-500" 
-                  onClick={() => navigate("/generate-questions")}
-                >
-                  Generate Questions
-                </Button>
-              </CardFooter>
             </Card>
           </div>
 
-          <div className="mt-8">
-            <Card className="bg-black/40 border-cyan-400/30 backdrop-blur-sm shadow-lg">
-              <CardHeader>
-                <CardTitle className="text-white">Your Information</CardTitle>
-                <CardDescription className="text-cyan-200">Your educator profile details</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <h3 className="text-sm font-medium text-cyan-300">Full Name</h3>
-                      <p className="text-white">{currentUser?.name || 'Not available'}</p>
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-medium text-cyan-300">Email</h3>
-                      <p className="text-white">{currentUser?.email || 'Not available'}</p>
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-medium text-cyan-300">Department</h3>
-                      <p className="text-white">{currentUser?.department || 'Not available'}</p>
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-medium text-cyan-300">Semester</h3>
-                      <p className="text-white">{currentUser?.semester || 'Not available'}</p>
-                    </div>
-                  </div>
+          {/* User Information */}
+          <Card className="bg-black/40 border-cyan-400/30 backdrop-blur-sm shadow-lg">
+            <CardHeader>
+              <CardTitle className="text-white">Your Information</CardTitle>
+              <CardDescription className="text-cyan-200">Your educator profile details</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div>
+                  <h3 className="text-sm font-medium text-cyan-300">Full Name</h3>
+                  <p className="text-white mt-1">{currentUser?.name || 'Not available'}</p>
                 </div>
-              </CardContent>
-            </Card>
-          </div>
+                <div>
+                  <h3 className="text-sm font-medium text-cyan-300">Email Address</h3>
+                  <p className="text-white mt-1">{currentUser?.email || 'Not available'}</p>
+                </div>
+                <div>
+                  <h3 className="text-sm font-medium text-cyan-300">Department</h3>
+                  <p className="text-white mt-1">{currentUser?.department || 'Not available'}</p>
+                </div>
+                <div>
+                  <h3 className="text-sm font-medium text-cyan-300">Default Semester</h3>
+                  <p className="text-white mt-1">Semester {currentUser?.semester || 'Not set'}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Quick Tips */}
+          <Alert className="bg-blue-900/20 border-blue-500/30">
+            <TrendingUp className="h-4 w-4 text-blue-400" />
+            <AlertDescription className="text-blue-100">
+              <strong>💡 Pro Tip:</strong> Upload your question bank and syllabus first to enable smart question selection. 
+              The AI will analyze your documents and suggest the most relevant questions based on difficulty, topics, and learning objectives.
+            </AlertDescription>
+          </Alert>
         </div>
       </div>
     </NetworkGridBackground>

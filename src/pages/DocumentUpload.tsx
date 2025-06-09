@@ -1,6 +1,6 @@
-// src/pages/DocumentUpload.tsx
+// src/pages/DocumentUpload.tsx - Enhanced with question paper generation flow
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { coursesAPI, uploadAPI } from "@/lib/api";
-import { ArrowLeft, Upload, FileText, CheckCircle, XCircle, Clock } from "lucide-react";
+import { ArrowLeft, Upload, FileText, CheckCircle, XCircle, Clock, PlusCircle, BookOpen } from "lucide-react";
 import NetworkGridBackground from "@/components/NetworkGridBackground";
 
 interface Course {
@@ -32,6 +33,7 @@ interface ProcessingStatus {
 const DocumentUpload = () => {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   
   const [courses, setCourses] = useState<Course[]>([]);
@@ -42,6 +44,13 @@ const DocumentUpload = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus | null>(null);
   const [uploads, setUploads] = useState<ProcessingStatus[]>([]);
+  
+  // Pre-filled exam configuration from navigation state
+  const [prefilledConfig, setPrefilledConfig] = useState<{
+    examType?: string;
+    semester?: string;
+    course?: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -49,9 +58,39 @@ const DocumentUpload = () => {
       return;
     }
     
+    // Check if we came from exam type selection with prefilled data
+    const state = location.state as {
+      examType?: string;
+      semester?: string;
+      course?: string;
+    } | null;
+    
+    if (state) {
+      setPrefilledConfig(state);
+      if (state.course) {
+        // Find the course ID by course code
+        fetchCourses().then(() => {
+          const course = courses.find(c => c.code === state.course);
+          if (course) {
+            setSelectedCourse(course._id);
+          }
+        });
+      }
+    }
+    
     fetchCourses();
     fetchMyUploads();
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    // Set selected course when courses are loaded and we have prefilled config
+    if (prefilledConfig?.course && courses.length > 0) {
+      const course = courses.find(c => c.code === prefilledConfig.course);
+      if (course) {
+        setSelectedCourse(course._id);
+      }
+    }
+  }, [courses, prefilledConfig]);
 
   const fetchCourses = async () => {
     try {
@@ -131,7 +170,6 @@ const DocumentUpload = () => {
       pollProcessingStatus(processId);
       
       // Clear form
-      setSelectedCourse("");
       setQuestionBankFile(null);
       setSyllabusFile(null);
       
@@ -217,6 +255,41 @@ const DocumentUpload = () => {
     }
   };
 
+  const handleCreateQuestionPaper = (upload: ProcessingStatus) => {
+    const selectedCourseData = courses.find(c => c._id === upload.course._id);
+    if (!selectedCourseData) return;
+
+    // If we have prefilled config, use it; otherwise, user needs to select exam type
+    if (prefilledConfig?.examType && prefilledConfig?.semester) {
+      const examConfig = {
+        examType: prefilledConfig.examType,
+        semester: prefilledConfig.semester,
+        course: selectedCourseData.code,
+        hasQuestionBank: true,
+        courseId: upload.course._id // Include the actual course ID
+      };
+
+      // Navigate to appropriate setup page based on exam type
+      if (prefilledConfig.examType === 'CIE') {
+        navigate("/cie-exam-setup", { state: examConfig });
+      } else {
+        navigate("/semester-exam-setup", { state: examConfig });
+      }
+    } else {
+      // Navigate to exam type selection with course pre-selected
+      navigate("/exam-type-selection", {
+        state: {
+          preSelectedCourse: selectedCourseData.code,
+          hasQuestionBank: true
+        }
+      });
+    }
+  };
+
+  const handleUseExistingData = (upload: ProcessingStatus) => {
+    handleCreateQuestionPaper(upload);
+  };
+
   return (
     <NetworkGridBackground>
       <div className="min-h-screen">
@@ -232,6 +305,39 @@ const DocumentUpload = () => {
         
         <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="px-4 py-6 sm:px-0 space-y-6">
+            
+            {/* Pre-filled Configuration Display */}
+            {prefilledConfig && (
+              <Card className="shadow-xl bg-black/40 backdrop-blur-sm border-cyan-500/30">
+                <CardHeader>
+                  <CardTitle className="text-white flex items-center">
+                    <BookOpen className="h-5 w-5 mr-2 text-cyan-400" />
+                    Exam Configuration
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <p className="text-sm font-medium text-cyan-300">Exam Type</p>
+                      <p className="mt-1 text-white">{prefilledConfig.examType || 'Not specified'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-cyan-300">Semester</p>
+                      <p className="mt-1 text-white">{prefilledConfig.semester || 'Not specified'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-cyan-300">Course</p>
+                      <p className="mt-1 text-white">{prefilledConfig.course || 'Not specified'}</p>
+                    </div>
+                  </div>
+                  <Alert className="mt-4 bg-cyan-900/20 border-cyan-500/30">
+                    <AlertDescription className="text-cyan-100">
+                      <strong>Ready to generate:</strong> Upload your documents below or use existing processed data to create your {prefilledConfig.examType} question paper.
+                    </AlertDescription>
+                  </Alert>
+                </CardContent>
+              </Card>
+            )}
             
             {/* Upload Form */}
             <Card className="shadow-xl bg-black/40 backdrop-blur-sm border-cyan-500/30">
@@ -335,6 +441,15 @@ const DocumentUpload = () => {
                           <span className="text-cyan-100">Topics Extracted:</span>
                           <span className="text-white">{processingStatus.topicsCount}</span>
                         </div>
+                        <div className="pt-4">
+                          <Button 
+                            onClick={() => handleCreateQuestionPaper(processingStatus)}
+                            className="w-full bg-green-600 hover:bg-green-500"
+                          >
+                            <PlusCircle className="h-4 w-4 mr-2" />
+                            Create Question Paper with This Data
+                          </Button>
+                        </div>
                       </>
                     )}
                     {processingStatus.status === 'PROCESSING' && (
@@ -360,7 +475,7 @@ const DocumentUpload = () => {
                       <div key={upload.processId} className="flex items-center justify-between p-3 bg-black/30 rounded-md border border-cyan-500/20">
                         <div className="flex items-center space-x-3">
                           {getStatusIcon(upload.status)}
-                          <div>
+                          <div className="flex-1">
                             <p className="text-white font-medium">{upload.course.name} ({upload.course.code})</p>
                             <p className="text-sm text-cyan-200">
                               {new Date(upload.createdAt).toLocaleDateString()}
@@ -368,7 +483,21 @@ const DocumentUpload = () => {
                             </p>
                           </div>
                         </div>
-                        <span className="text-sm text-cyan-100">{getStatusText(upload.status)}</span>
+                        <div className="flex items-center space-x-2">
+                          <Badge variant={upload.status === 'COMPLETED' ? 'default' : 'secondary'}>
+                            {getStatusText(upload.status)}
+                          </Badge>
+                          {upload.status === 'COMPLETED' && (
+                            <Button 
+                              size="sm"
+                              onClick={() => handleUseExistingData(upload)}
+                              className="bg-cyan-600 hover:bg-cyan-500"
+                            >
+                              <PlusCircle className="h-3 w-3 mr-1" />
+                              Use Data
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -394,7 +523,7 @@ const DocumentUpload = () => {
                 <br />
                 5. Wait for processing to complete (this may take several minutes)
                 <br />
-                6. Once completed, you can use the processed data to generate question papers
+                6. Once completed, click "Create Question Paper" to generate your exam
               </AlertDescription>
             </Alert>
           </div>

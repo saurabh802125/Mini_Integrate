@@ -7,7 +7,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/ui/use-toast";
-import { ArrowLeft } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { ArrowLeft, Database, Bot } from "lucide-react";
+import { uploadAPI, coursesAPI } from "@/lib/api";
 import NetworkGridBackground from "@/components/NetworkGridBackground";
 import TopicSelector from "@/components/TopicSelector";
 
@@ -17,6 +20,18 @@ interface QuestionConfig {
   marks: number;
   includeC: boolean; // For c parts (1c, 2c, 3c)
   topic: string; // For topic-based question generation
+}
+
+interface ProcessedTopic {
+  unit: string;
+  topic_id: number;
+  topic: string;
+}
+
+interface Course {
+  _id: string;
+  name: string;
+  code: string;
 }
 
 const CieExamSetup = () => {
@@ -29,13 +44,16 @@ const CieExamSetup = () => {
     examType: string;
     semester: string;
     course: string;
-    topics?: string[];
     hasQuestionBank?: boolean;
   } | null>(null);
   
   const [questionConfigs, setQuestionConfigs] = useState<QuestionConfig[]>([]);
   const [numQuestions, setNumQuestions] = useState<number>(5); // Default number of questions to generate
   const [availableTopics, setAvailableTopics] = useState<string[]>([]);
+  const [processedTopics, setProcessedTopics] = useState<ProcessedTopic[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [selectedCourseId, setSelectedCourseId] = useState<string>("");
+  const [hasProcessedData, setHasProcessedData] = useState<boolean>(false);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -48,7 +66,6 @@ const CieExamSetup = () => {
       examType: string;
       semester: string;
       course: string;
-      topics?: string[];
       hasQuestionBank?: boolean;
     } | null;
     
@@ -64,24 +81,83 @@ const CieExamSetup = () => {
     
     setExamConfig(state);
     
-    // Set available topics from the parsed syllabus
-    if (state.topics && state.topics.length > 0) {
-      setAvailableTopics(state.topics);
-    } else {
-      // If no topics were parsed, use a default set based on OS course
+    // Fetch courses and then load processed data
+    fetchCourses().then(() => {
+      loadProcessedData(state.course);
+    });
+    
+    // Initialize question configurations with default values and topic fields
+    initializeQuestionConfigs();
+  }, [isAuthenticated, location.state, navigate, toast]);
+
+  const fetchCourses = async () => {
+    try {
+      const response = await coursesAPI.getAllCourses();
+      setCourses(response.data);
+    } catch (error) {
+      console.error("Failed to fetch courses:", error);
+    }
+  };
+
+  const loadProcessedData = async (courseCode: string) => {
+    try {
+      // Find course by code
+      const course = courses.find(c => c.code === courseCode);
+      if (!course) {
+        // If courses not loaded yet, wait and try again
+        setTimeout(() => loadProcessedData(courseCode), 500);
+        return;
+      }
+      
+      setSelectedCourseId(course._id);
+      
+      // Try to get processed data for this course
+      const response = await uploadAPI.getProcessedData(course._id);
+      
+      if (response.data && response.data.questions.length > 0) {
+        setHasProcessedData(true);
+        setProcessedTopics(response.data.topics || []);
+        
+        // Extract unique topics from processed data
+        const topics = response.data.topics.map((t: ProcessedTopic) => t.topic);
+        setAvailableTopics(topics);
+        
+        toast({
+          title: "Processed data loaded",
+          description: `Found ${response.data.questions.length} questions and ${topics.length} topics`,
+        });
+      } else {
+        setHasProcessedData(false);
+        // Use default topics if no processed data
+        setAvailableTopics([
+          "Introduction to Operating Systems",
+          "Process Management",
+          "Memory Management", 
+          "File Systems",
+          "I/O Systems",
+          "Virtualization",
+          "Distributed Systems",
+          "Security and Protection"
+        ]);
+      }
+    } catch (error) {
+      console.error("Error loading processed data:", error);
+      setHasProcessedData(false);
+      // Use default topics
       setAvailableTopics([
         "Introduction to Operating Systems",
         "Process Management",
         "Memory Management",
-        "File Systems",
+        "File Systems", 
         "I/O Systems",
         "Virtualization",
         "Distributed Systems",
         "Security and Protection"
       ]);
     }
-    
-    // Initialize question configurations with default values and topic fields
+  };
+
+  const initializeQuestionConfigs = () => {
     const initialConfigs: QuestionConfig[] = [];
     
     // Create configs for questions 1a, 1b, 1c, 2a, 2b, 2c, 3a, 3b, 3c
@@ -98,7 +174,7 @@ const CieExamSetup = () => {
     }
     
     setQuestionConfigs(initialConfigs);
-  }, [isAuthenticated, location.state, navigate, toast]);
+  };
 
   const handleLevelChange = (questionId: string, level: string) => {
     setQuestionConfigs(prevConfigs => 
@@ -175,16 +251,24 @@ const CieExamSetup = () => {
     // Navigate to question generation page with the configuration
     navigate("/generate-questions", {
       state: {
-        examConfig,
+        examConfig: {
+          ...examConfig,
+          courseId: selectedCourseId // Pass the actual course ID
+        },
         questionConfigs,
         numQuestions,
-        useQuestionBank: examConfig?.hasQuestionBank || false
+        useQuestionBank: hasProcessedData
       }
     });
   };
 
   const goBack = () => {
-    navigate("/upload-documents", { state: examConfig });
+    navigate("/exam-type-selection", { 
+      state: examConfig?.hasQuestionBank ? { 
+        preSelectedCourse: examConfig.course,
+        hasQuestionBank: true 
+      } : undefined 
+    });
   };
 
   if (!examConfig) {
@@ -239,13 +323,38 @@ const CieExamSetup = () => {
                   </div>
                 </div>
                 
-                {examConfig.hasQuestionBank && (
-                  <div className="mt-4 p-3 bg-cyan-900/20 border border-cyan-500/30 rounded-md">
-                    <p className="text-cyan-100">
-                      <span className="font-medium">Using Question Bank:</span> Questions will be generated from your uploaded question bank based on the selected topics and difficulty levels.
+                {/* Data Source Information */}
+                <div className="mt-4 p-3 rounded-md border">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      {hasProcessedData ? (
+                        <>
+                          <Database className="h-5 w-5 text-green-400" />
+                          <Badge variant="default" className="bg-green-600">Processed Data Available</Badge>
+                        </>
+                      ) : (
+                        <>
+                          <Bot className="h-5 w-5 text-blue-400" />
+                          <Badge variant="secondary">AI Generation Mode</Badge>
+                        </>
+                      )}
+                    </div>
+                    <p className="text-sm text-cyan-200">
+                      {hasProcessedData 
+                        ? `${processedTopics.length} topics from your question bank`
+                        : "Questions will be generated using AI"
+                      }
                     </p>
                   </div>
-                )}
+                  
+                  {hasProcessedData && (
+                    <Alert className="mt-3 bg-green-900/20 border-green-500/30">
+                      <AlertDescription className="text-green-100">
+                        <strong>Smart Generation:</strong> Questions will be intelligently selected from your uploaded question bank based on difficulty, marks, and topics.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
               </CardContent>
             </Card>
             
@@ -347,7 +456,10 @@ const CieExamSetup = () => {
                     className="bg-black/50 border-cyan-500/30 text-white"
                   />
                   <p className="text-sm text-cyan-200/70">
-                    The AI will generate {numQuestions} question options for each section
+                    {hasProcessedData 
+                      ? `AI will select the best ${numQuestions} questions from your question bank for each section`
+                      : `AI will generate ${numQuestions} question options for each section`
+                    }
                   </p>
                 </div>
               </CardContent>

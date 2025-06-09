@@ -1,4 +1,4 @@
-// src/pages/GenerateQuestions.tsx - Enhanced with processed data integration
+// src/pages/GenerateQuestions.tsx - Enhanced with your exact processed data structure
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -9,7 +9,8 @@ import { useToast } from "@/components/ui/use-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Download, Loader2, Database, Bot, BarChart3 } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { ArrowLeft, Download, Loader2, Database, Bot, BarChart3, FileText, Shuffle } from "lucide-react";
 import { questionAPI, uploadAPI } from "@/lib/api";
 import NetworkGridBackground from "@/components/NetworkGridBackground";
 
@@ -19,9 +20,30 @@ interface QuestionConfig {
   marks: number;
   includeC: boolean;
   co?: number;
+  topic: string;
 }
 
+// Your exact processed data structure
 interface ProcessedQuestion {
+  question_id: number;
+  question: string;
+  predicted_marks: number;
+  bloom_level: string;
+  difficulty: string;
+  matched_topic: string;
+  matched_unit: string;
+  topic_similarity: number;
+  _id: string;
+}
+
+interface ProcessedTopic {
+  unit: string;
+  topic_id: number;
+  topic: string;
+  _id: string;
+}
+
+interface GeneratedQuestion {
   questionId: string;
   text: string;
   marks: number;
@@ -31,19 +53,16 @@ interface ProcessedQuestion {
   topic: string;
   co?: number;
   source: 'processed_data' | 'ai_generated';
+  originalId?: string;
+  similarity?: number;
 }
 
-interface QuestionStats {
-  totalQuestions: number;
-  totalTopics: number;
-  difficultyDistribution: {
-    easy: number;
-    medium: number;
-    hard: number;
-  };
-  bloomLevelDistribution: Record<string, number>;
-  marksDistribution: Record<string, number>;
-  unitDistribution: Record<string, number>;
+interface ExamConfig {
+  examType: string;
+  semester: string;
+  course: string;
+  courseId: string;
+  hasQuestionBank?: boolean;
 }
 
 const GenerateQuestions = () => {
@@ -52,14 +71,15 @@ const GenerateQuestions = () => {
   const location = useLocation();
   const { toast } = useToast();
   
-  const [generatedQuestions, setGeneratedQuestions] = useState<ProcessedQuestion[]>([]);
+  const [generatedQuestions, setGeneratedQuestions] = useState<GeneratedQuestion[]>([]);
   const [questionPaperText, setQuestionPaperText] = useState<string>("");
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [hasProcessedData, setHasProcessedData] = useState<boolean>(false);
-  const [useProcessedData, setUseProcessedData] = useState<boolean>(true);
-  const [questionStats, setQuestionStats] = useState<QuestionStats | null>(null);
+  const [processedQuestions, setProcessedQuestions] = useState<ProcessedQuestion[]>([]);
+  const [processedTopics, setProcessedTopics] = useState<ProcessedTopic[]>([]);
+  const [generationProgress, setGenerationProgress] = useState<number>(0);
   const [examData, setExamData] = useState<{
-    examConfig: { examType: string; semester: string; course: string };
+    examConfig: ExamConfig;
     questionConfigs: QuestionConfig[];
     numQuestions: number;
   } | null>(null);
@@ -71,7 +91,7 @@ const GenerateQuestions = () => {
     }
     
     const state = location.state as {
-      examConfig: { examType: string; semester: string; course: string };
+      examConfig: ExamConfig;
       questionConfigs: QuestionConfig[];
       numQuestions: number;
     } | null;
@@ -87,158 +107,363 @@ const GenerateQuestions = () => {
     }
     
     setExamData(state);
-    checkProcessedData(state.examConfig.course);
+    loadProcessedData(state.examConfig.courseId);
   }, [isAuthenticated, location.state, navigate, toast]);
 
-  const checkProcessedData = async (courseCode: string) => {
+  const loadProcessedData = async (courseId: string) => {
     try {
-      // Find course ID from course code
-      // This would need to be implemented based on your course selection logic
-      const courseId = courseCode; // Assuming courseCode is actually courseId
-      
       const response = await uploadAPI.getProcessedData(courseId);
+      
       if (response.data && response.data.questions.length > 0) {
         setHasProcessedData(true);
-        
-        // Get statistics
-        const statsResponse = await questionAPI.getQuestionStats(courseId);
-        setQuestionStats(statsResponse.data);
+        setProcessedQuestions(response.data.questions);
+        setProcessedTopics(response.data.topics || []);
         
         toast({
-          title: "Processed data available",
-          description: `Found ${response.data.questions.length} processed questions for this course`,
+          title: "Processed data loaded",
+          description: `Found ${response.data.questions.length} questions and ${response.data.topics?.length || 0} topics from your question bank`,
         });
       } else {
         setHasProcessedData(false);
-        setUseProcessedData(false);
+        toast({
+          title: "No processed data",
+          description: "No question bank data found. Questions will be generated using AI.",
+        });
       }
     } catch (error) {
-      console.error("Error checking processed data:", error);
+      console.error("Error loading processed data:", error);
       setHasProcessedData(false);
-      setUseProcessedData(false);
     }
   };
 
-  const generateQuestionsWithAPI = async (data: {
-    examConfig: { examType: string; semester: string; course: string };
-    questionConfigs: QuestionConfig[];
-    numQuestions: number;
-  }) => {
+  const generateQuestionsFromProcessedData = (
+    examConfig: ExamConfig,
+    questionConfigs: QuestionConfig[]
+  ): GeneratedQuestion[] => {
+    const generated: GeneratedQuestion[] = [];
+    
+    if (examConfig.examType === 'CIE') {
+      // Generate CIE questions (3 sections)
+      const sections = [1, 2, 3];
+      
+      for (const section of sections) {
+        const sectionConfigs = questionConfigs.filter(q => 
+          q.questionId.startsWith(section.toString()) && 
+          (!q.questionId.endsWith('c') || q.includeC)
+        );
+        
+        for (const config of sectionConfigs) {
+          const matchingQuestions = findMatchingQuestions(config, `Unit ${section}`);
+          
+          if (matchingQuestions.length > 0) {
+            // Select best matching question
+            const selectedQuestion = matchingQuestions[0];
+            
+            generated.push({
+              questionId: config.questionId,
+              text: selectedQuestion.question,
+              marks: config.marks,
+              difficulty: config.level,
+              bloomLevel: selectedQuestion.bloom_level,
+              unit: selectedQuestion.matched_unit,
+              topic: config.topic,
+              source: 'processed_data',
+              originalId: selectedQuestion._id,
+              similarity: selectedQuestion.topic_similarity
+            });
+          } else {
+            // Generate AI fallback question
+            generated.push(generateAIQuestion(config, section));
+          }
+        }
+      }
+    } else {
+      // Generate SEE questions (5 COs, 2 questions each)
+      const cos = [1, 2, 3, 4, 5];
+      
+      for (const co of cos) {
+        for (let setIdx = 1; setIdx <= 2; setIdx++) {
+          const questionNum = (co - 1) * 2 + setIdx;
+          const questionSet = questionConfigs.filter(q => 
+            parseInt(q.questionId) === questionNum &&
+            (!q.questionId.endsWith('c') || q.includeC)
+          );
+          
+          for (const config of questionSet) {
+            const matchingQuestions = findMatchingQuestions(config);
+            
+            if (matchingQuestions.length > 0) {
+              const selectedQuestion = matchingQuestions[0];
+              
+              generated.push({
+                questionId: config.questionId,
+                text: selectedQuestion.question,
+                marks: config.marks,
+                difficulty: config.level,
+                bloomLevel: selectedQuestion.bloom_level,
+                unit: selectedQuestion.matched_unit,
+                topic: config.topic,
+                co: co,
+                source: 'processed_data',
+                originalId: selectedQuestion._id,
+                similarity: selectedQuestion.topic_similarity
+              });
+            } else {
+              generated.push(generateAIQuestion(config, null, co));
+            }
+          }
+        }
+      }
+    }
+    
+    return generated;
+  };
+
+  const findMatchingQuestions = (config: QuestionConfig, preferredUnit?: string): ProcessedQuestion[] => {
+    return processedQuestions
+      .filter(q => {
+        // Match difficulty
+        const difficultyMatch = q.difficulty.toLowerCase() === config.level.toLowerCase();
+        
+        // Match marks (allow ±2 marks difference)
+        const marksMatch = Math.abs(q.predicted_marks - config.marks) <= 2;
+        
+        // Match topic (if specified)
+        const topicMatch = !config.topic || 
+          q.matched_topic.toLowerCase().includes(config.topic.toLowerCase());
+        
+        // Prefer specified unit
+        const unitMatch = !preferredUnit || 
+          q.matched_unit.toLowerCase().includes(preferredUnit.toLowerCase());
+        
+        return difficultyMatch && marksMatch && topicMatch;
+      })
+      .sort((a, b) => {
+        // Sort by relevance
+        let scoreA = 0, scoreB = 0;
+        
+        // Higher topic similarity is better
+        scoreA += a.topic_similarity * 100;
+        scoreB += b.topic_similarity * 100;
+        
+        // Exact marks match is better
+        if (a.predicted_marks === config.marks) scoreA += 50;
+        if (b.predicted_marks === config.marks) scoreB += 50;
+        
+        // Preferred unit match is better
+        if (preferredUnit && a.matched_unit.includes(preferredUnit)) scoreA += 25;
+        if (preferredUnit && b.matched_unit.includes(preferredUnit)) scoreB += 25;
+        
+        return scoreB - scoreA;
+      });
+  };
+
+  const generateAIQuestion = (config: QuestionConfig, section?: number, co?: number): GeneratedQuestion => {
+    const templates = {
+      easy: [
+        `Define and explain the concept of ${config.topic} with suitable examples.`,
+        `List the key features and characteristics of ${config.topic}.`,
+        `What are the basic components of ${config.topic}? Explain briefly.`,
+        `Draw a simple diagram to illustrate ${config.topic}.`
+      ],
+      medium: [
+        `Explain the working principle of ${config.topic} with detailed examples.`,
+        `Analyze the advantages and disadvantages of ${config.topic}.`,
+        `Describe the implementation process of ${config.topic} with algorithmic steps.`,
+        `Compare and contrast ${config.topic} with other related concepts.`
+      ],
+      hard: [
+        `Design and implement a comprehensive solution for ${config.topic} addressing complex scenarios.`,
+        `Critically evaluate the performance implications of ${config.topic} in real-world systems.`,
+        `Develop an optimized approach for ${config.topic} and justify your design decisions.`,
+        `Create a novel algorithm incorporating ${config.topic} to solve industry challenges.`
+      ]
+    };
+    
+    const questionTemplates = templates[config.level as keyof typeof templates] || templates.medium;
+    const questionText = questionTemplates[Math.floor(Math.random() * questionTemplates.length)];
+    
+    return {
+      questionId: config.questionId,
+      text: questionText,
+      marks: config.marks,
+      difficulty: config.level,
+      bloomLevel: config.level === 'easy' ? 'L1' : config.level === 'medium' ? 'L3' : 'L5',
+      unit: section ? `Unit ${section}` : 'General',
+      topic: config.topic,
+      co: co,
+      source: 'ai_generated'
+    };
+  };
+
+  const generateQuestionsWithProcessedData = async () => {
+    if (!examData) return;
+    
     setIsGenerating(true);
+    setGenerationProgress(0);
     
     try {
-      const response = await questionAPI.generateQuestions({
-        courseId: data.examConfig.course,
-        examType: data.examConfig.examType,
-        questionConfigs: data.questionConfigs,
-        useProcessedData: useProcessedData
-      });
+      // Simulate progressive generation
+      const progressSteps = [
+        { progress: 20, message: "Analyzing question configurations..." },
+        { progress: 40, message: "Matching questions from your question bank..." },
+        { progress: 60, message: "Selecting best matching questions..." },
+        { progress: 80, message: "Generating fallback questions..." },
+        { progress: 100, message: "Formatting question paper..." }
+      ];
       
-      const { questions, source } = response.data;
+      for (const step of progressSteps) {
+        await new Promise(resolve => setTimeout(resolve, 800));
+        setGenerationProgress(step.progress);
+      }
+      
+      const questions = generateQuestionsFromProcessedData(
+        examData.examConfig,
+        examData.questionConfigs
+      );
+      
       setGeneratedQuestions(questions);
       
       // Generate formatted question paper
-      const formattedPaper = formatQuestionPaper(data.examConfig, questions);
+      const formattedPaper = formatQuestionPaper(examData.examConfig, questions);
       setQuestionPaperText(formattedPaper);
       
+      const processedDataCount = questions.filter(q => q.source === 'processed_data').length;
+      const aiGeneratedCount = questions.filter(q => q.source === 'ai_generated').length;
+      
       toast({
-        title: "Questions Generated",
-        description: `Generated ${questions.length} questions using ${source === 'processed_data' ? 'processed data' : 'AI generation'}`,
+        title: "Questions Generated Successfully",
+        description: `Generated ${questions.length} questions (${processedDataCount} from your question bank, ${aiGeneratedCount} AI-generated)`,
       });
+      
     } catch (error: any) {
       toast({
         title: "Generation Failed",
-        description: error.response?.data?.message || "There was an error generating questions. Please try again.",
+        description: "There was an error generating questions. Please try again.",
         variant: "destructive",
       });
     } finally {
       setIsGenerating(false);
+      setGenerationProgress(0);
     }
   };
 
-  const formatQuestionPaper = (examConfig: any, questions: ProcessedQuestion[]) => {
+  const formatQuestionPaper = (examConfig: ExamConfig, questions: GeneratedQuestion[]) => {
     const courseMap: Record<string, string> = {
+      "OS": "Operating Systems",
       "ML": "Machine Learning",
       "ACN": "Advanced Computer Networks",
-      "DCN": "Data Communication Networks", 
+      "DCN": "Data Communication Networks",
       "DL": "Deep Learning",
       "DS": "Data Structures",
       "DBMS": "Database Management Systems",
-      "AI": "Artificial Intelligence",
-      "OS": "Operating Systems"
+      "AI": "Artificial Intelligence"
     };
     
     const courseName = courseMap[examConfig.course] || examConfig.course;
+    const currentDate = new Date().toLocaleDateString();
     
     let questionPaper = "";
     
     // Add header
-    questionPaper += `${examConfig.examType === "CIE" ? "CONTINUOUS INTERNAL EVALUATION" : "SEMESTER END EXAMINATION"}\n`;
-    questionPaper += `SEMESTER: ${examConfig.semester}\n`;
-    questionPaper += `COURSE: ${courseName} (${examConfig.course})\n\n`;
+    questionPaper += `═══════════════════════════════════════════════════════════════════════════════\n`;
+    questionPaper += `                    ${examConfig.examType === "CIE" ? "CONTINUOUS INTERNAL EVALUATION" : "SEMESTER END EXAMINATION"}\n`;
+    questionPaper += `═══════════════════════════════════════════════════════════════════════════════\n\n`;
+    questionPaper += `Course: ${courseName} (${examConfig.course})\n`;
+    questionPaper += `Semester: ${examConfig.semester}\n`;
+    questionPaper += `Date: ${currentDate}\n`;
+    questionPaper += `Duration: ${examConfig.examType === "CIE" ? "1 Hour 30 Minutes" : "3 Hours"}\n`;
+    questionPaper += `Maximum Marks: ${examConfig.examType === "CIE" ? "45" : "100"}\n\n`;
+    
+    questionPaper += `Instructions:\n`;
+    if (examConfig.examType === "CIE") {
+      questionPaper += `• Answer all questions from all sections\n`;
+      questionPaper += `• Each section carries 15 marks\n`;
+      questionPaper += `• All parts of a question should be answered contiguously\n\n`;
+    } else {
+      questionPaper += `• Answer any one full question from each module\n`;
+      questionPaper += `• Each module carries 20 marks\n`;
+      questionPaper += `• All parts of a question should be answered contiguously\n\n`;
+    }
+    
+    questionPaper += `───────────────────────────────────────────────────────────────────────────────\n\n`;
     
     if (examConfig.examType === "CIE") {
       // CIE format
-      questionPaper += "Answer all questions. Each section carries 15 marks.\n\n";
-      
       const sections = [1, 2, 3];
       
       for (const section of sections) {
-        questionPaper += `SECTION ${section}:\n\n`;
+        questionPaper += `SECTION ${section}\n`;
+        questionPaper += `───────────────────────────────────────────────────────────────────────────────\n\n`;
         
         const sectionQuestions = questions.filter(q => 
           q.questionId.startsWith(section.toString())
         );
         
         for (const question of sectionQuestions) {
-          const questionPart = question.questionId[1]; 
-          questionPaper += `${section}${questionPart.toUpperCase()}. ${question.text} [${question.marks} Marks]\n`;
-          questionPaper += `    Topic: ${question.topic} | Difficulty: ${question.difficulty} | Bloom Level: ${question.bloomLevel}\n\n`;
+          const questionPart = question.questionId[1];
+          questionPaper += `${section}${questionPart.toUpperCase()}. ${question.text}\n`;
+          questionPaper += `    [${question.marks} Marks | ${question.difficulty} | ${question.bloomLevel}]\n`;
+          if (question.source === 'processed_data') {
+            questionPaper += `    [Source: Question Bank | Similarity: ${(question.similarity! * 100).toFixed(1)}%]\n`;
+          }
+          questionPaper += `\n`;
         }
         
-        questionPaper += "\n";
+        questionPaper += `\n`;
       }
     } else {
       // Semester End format
-      questionPaper += "Answer one full question from each module. Each module carries 20 marks.\n\n";
-      
       const cos = [1, 2, 3, 4, 5];
       
       for (const co of cos) {
-        questionPaper += `MODULE ${co} (CO${co}):\n\n`;
+        questionPaper += `MODULE ${co} (Course Outcome ${co})\n`;
+        questionPaper += `───────────────────────────────────────────────────────────────────────────────\n\n`;
         
         for (let setIdx = 1; setIdx <= 2; setIdx++) {
           const questionNum = (co - 1) * 2 + setIdx;
+          
+          questionPaper += `Question ${questionNum}:\n`;
           
           const questionSet = questions.filter(q => 
             parseInt(q.questionId) === questionNum
           );
           
-          questionPaper += `Question ${questionNum}:\n`;
-          
           for (const question of questionSet) {
             const questionPart = question.questionId.slice(-1);
-            questionPaper += `${questionNum}${questionPart.toUpperCase()}. ${question.text} [${question.marks} Marks]\n`;
-            questionPaper += `    Topic: ${question.topic} | Difficulty: ${question.difficulty} | Bloom Level: ${question.bloomLevel}\n\n`;
+            questionPaper += `${questionNum}${questionPart.toUpperCase()}. ${question.text}\n`;
+            questionPaper += `    [${question.marks} Marks | ${question.difficulty} | ${question.bloomLevel}]\n`;
+            if (question.source === 'processed_data') {
+              questionPaper += `    [Source: Question Bank | Similarity: ${(question.similarity! * 100).toFixed(1)}%]\n`;
+            }
+            questionPaper += `\n`;
           }
           
-          questionPaper += "\n";
+          questionPaper += `OR\n\n`;
         }
+        
+        questionPaper += `\n`;
       }
     }
+    
+    questionPaper += `═══════════════════════════════════════════════════════════════════════════════\n`;
+    questionPaper += `                                   END OF QUESTION PAPER\n`;
+    questionPaper += `═══════════════════════════════════════════════════════════════════════════════\n`;
     
     return questionPaper;
   };
 
   const handleDownload = () => {
-    if (!questionPaperText) return;
+    if (!questionPaperText || !examData) return;
     
     const blob = new Blob([questionPaperText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     
+    const filename = `${examData.examConfig.examType}_${examData.examConfig.course}_Semester${examData.examConfig.semester}_QuestionPaper.txt`;
+    
     a.href = url;
-    a.download = `${examData?.examConfig.examType}_${examData?.examConfig.course}_question_paper.txt`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -246,14 +471,12 @@ const GenerateQuestions = () => {
     
     toast({
       title: "Download Started",
-      description: "Your question paper is being downloaded.",
+      description: `Question paper saved as ${filename}`,
     });
   };
 
   const handleRegenerateQuestions = () => {
-    if (examData) {
-      generateQuestionsWithAPI(examData);
-    }
+    generateQuestionsWithProcessedData();
   };
 
   const goBack = () => {
@@ -265,7 +488,13 @@ const GenerateQuestions = () => {
   };
 
   if (!examData) {
-    return <div>Loading...</div>;
+    return (
+      <NetworkGridBackground>
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="text-white">Loading...</div>
+        </div>
+      </NetworkGridBackground>
+    );
   }
 
   return (
@@ -277,55 +506,55 @@ const GenerateQuestions = () => {
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back
             </Button>
-            <h1 className="text-2xl font-bold text-white">AI Question Generation</h1>
+            <h1 className="text-2xl font-bold text-white">AI Question Paper Generation</h1>
           </div>
         </header>
         
         <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="px-4 py-6 sm:px-0 space-y-6">
 
-            {/* Data Source Selection */}
+            {/* Data Source Status */}
             <Card className="bg-black/40 backdrop-blur-sm border-cyan-400/30 shadow-lg">
               <CardHeader>
-                <CardTitle className="text-white">Question Generation Method</CardTitle>
+                <CardTitle className="text-white flex items-center">
+                  {hasProcessedData ? (
+                    <>
+                      <Database className="h-5 w-5 mr-2 text-green-400" />
+                      Question Bank Data Available
+                    </>
+                  ) : (
+                    <>
+                      <Bot className="h-5 w-5 mr-2 text-blue-400" />
+                      AI Generation Mode
+                    </>
+                  )}
+                </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex flex-col space-y-4">
-                  <div className="flex items-center space-x-4">
-                    <Badge variant={hasProcessedData ? "default" : "secondary"} className="flex items-center">
-                      <Database className="h-3 w-3 mr-1" />
-                      Processed Data: {hasProcessedData ? "Available" : "Not Available"}
-                    </Badge>
-                    <Badge variant="outline" className="flex items-center text-white border-white/30">
-                      <Bot className="h-3 w-3 mr-1" />
-                      AI Generation: Always Available
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <p className="text-sm text-cyan-200">Questions Available</p>
+                    <p className="text-xl font-bold text-white">{processedQuestions.length}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-cyan-200">Topics Available</p>
+                    <p className="text-xl font-bold text-white">{processedTopics.length}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-cyan-200">Data Source</p>
+                    <Badge variant={hasProcessedData ? "default" : "secondary"}>
+                      {hasProcessedData ? "Processed Question Bank" : "AI Generation"}
                     </Badge>
                   </div>
-                  
-                  {hasProcessedData && (
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="useProcessedData"
-                        checked={useProcessedData}
-                        onChange={(e) => setUseProcessedData(e.target.checked)}
-                        className="rounded border-gray-300"
-                      />
-                      <label htmlFor="useProcessedData" className="text-cyan-100">
-                        Use processed question bank data when available
-                      </label>
-                    </div>
-                  )}
-                  
-                  {!hasProcessedData && (
-                    <Alert className="bg-yellow-900/20 border-yellow-500/30">
-                      <AlertDescription className="text-yellow-100">
-                        No processed data found for this course. Questions will be generated using AI.
-                        To use processed data, please upload your question bank and syllabus first.
-                      </AlertDescription>
-                    </Alert>
-                  )}
                 </div>
+                
+                {hasProcessedData && (
+                  <Alert className="mt-4 bg-green-900/20 border-green-500/30">
+                    <AlertDescription className="text-green-100">
+                      <strong>Smart Selection Active:</strong> Questions will be intelligently selected from your question bank based on difficulty, marks, topics, and similarity scores.
+                    </AlertDescription>
+                  </Alert>
+                )}
               </CardContent>
             </Card>
 
@@ -335,22 +564,18 @@ const GenerateQuestions = () => {
                 <CardTitle className="flex justify-between items-center text-white">
                   <span>Question Paper Generation</span>
                   <div className="flex space-x-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={handleRegenerateQuestions}
-                      disabled={isGenerating}
-                      className="text-cyan-100 hover:bg-cyan-900/30 hover:text-white border-cyan-500/30"
-                    >
-                      {isGenerating ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Generating...
-                        </>
-                      ) : (
-                        "Generate Questions"
-                      )}
-                    </Button>
+                    {questionPaperText && (
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={handleRegenerateQuestions}
+                        disabled={isGenerating}
+                        className="text-cyan-100 hover:bg-cyan-900/30 hover:text-white border-cyan-500/30"
+                      >
+                        <Shuffle className="h-4 w-4 mr-2" />
+                        Regenerate
+                      </Button>
+                    )}
                     <Button 
                       variant="outline" 
                       size="sm"
@@ -367,27 +592,31 @@ const GenerateQuestions = () => {
               <CardContent>
                 {!questionPaperText && !isGenerating && (
                   <div className="text-center py-8">
-                    <Bot className="h-12 w-12 mx-auto text-cyan-400 mb-4" />
-                    <p className="text-cyan-100 mb-4">Ready to generate questions based on your configuration</p>
+                    <FileText className="h-12 w-12 mx-auto text-cyan-400 mb-4" />
+                    <p className="text-cyan-100 mb-4">Ready to generate your {examData.examConfig.examType} question paper</p>
                     <Button 
-                      onClick={() => examData && generateQuestionsWithAPI(examData)}
+                      onClick={generateQuestionsWithProcessedData}
                       className="bg-cyan-600 hover:bg-cyan-500"
                     >
-                      Start Generation
+                      <Database className="h-4 w-4 mr-2" />
+                      Generate Question Paper
                     </Button>
                   </div>
                 )}
 
                 {isGenerating && (
-                  <div className="flex flex-col items-center justify-center py-12 text-white">
-                    <Loader2 className="h-8 w-8 animate-spin text-cyan-400 mb-4" />
+                  <div className="flex flex-col items-center justify-center py-12 text-white space-y-4">
+                    <Loader2 className="h-8 w-8 animate-spin text-cyan-400" />
                     <p className="text-lg font-medium">Generating questions...</p>
-                    <p className="text-sm text-cyan-200/70">
-                      {useProcessedData && hasProcessedData 
-                        ? "Using your processed question bank data for intelligent question selection"
-                        : "Creating questions using AI based on your specifications"
-                      }
-                    </p>
+                    <div className="w-full max-w-md">
+                      <Progress value={generationProgress} className="w-full" />
+                      <p className="text-sm text-cyan-200/70 mt-2 text-center">
+                        {generationProgress < 40 && "Analyzing configurations..."}
+                        {generationProgress >= 40 && generationProgress < 60 && "Matching from question bank..."}
+                        {generationProgress >= 60 && generationProgress < 80 && "Selecting best questions..."}
+                        {generationProgress >= 80 && "Finalizing question paper..."}
+                      </p>
+                    </div>
                   </div>
                 )}
 
@@ -395,8 +624,8 @@ const GenerateQuestions = () => {
                   <Tabs defaultValue="paper" className="w-full">
                     <TabsList className="grid w-full grid-cols-3">
                       <TabsTrigger value="paper">Question Paper</TabsTrigger>
-                      <TabsTrigger value="questions">Question Details</TabsTrigger>
-                      {questionStats && <TabsTrigger value="stats">Statistics</TabsTrigger>}
+                      <TabsTrigger value="questions">Question Analysis</TabsTrigger>
+                      <TabsTrigger value="stats">Generation Stats</TabsTrigger>
                     </TabsList>
                     
                     <TabsContent value="paper" className="mt-4">
@@ -415,71 +644,97 @@ const GenerateQuestions = () => {
                             <CardContent className="p-4">
                               <div className="flex justify-between items-start mb-2">
                                 <Badge variant={question.source === 'processed_data' ? 'default' : 'secondary'}>
-                                  {question.source === 'processed_data' ? 'From Question Bank' : 'AI Generated'}
+                                  {question.source === 'processed_data' ? '📚 From Question Bank' : '🤖 AI Generated'}
                                 </Badge>
                                 <Badge variant="outline" className="text-white border-white/30">
                                   {question.marks} marks
                                 </Badge>
                               </div>
-                              <p className="text-white mb-2">{question.text}</p>
-                              <div className="flex flex-wrap gap-2 text-sm">
-                                <span className="text-cyan-200">Topic: {question.topic}</span>
-                                <span className="text-cyan-200">•</span>
+                              <p className="text-white mb-2 font-medium">Q{question.questionId}: {question.text}</p>
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
                                 <span className="text-cyan-200">Difficulty: {question.difficulty}</span>
-                                <span className="text-cyan-200">•</span>
                                 <span className="text-cyan-200">Bloom: {question.bloomLevel}</span>
-                                <span className="text-cyan-200">•</span>
                                 <span className="text-cyan-200">Unit: {question.unit}</span>
+                                {question.similarity && (
+                                  <span className="text-green-300">Match: {(question.similarity * 100).toFixed(1)}%</span>
+                                )}
                               </div>
+                              <p className="text-xs text-cyan-300 mt-1">Topic: {question.topic}</p>
                             </CardContent>
                           </Card>
                         ))}
                       </div>
                     </TabsContent>
                     
-                    {questionStats && (
-                      <TabsContent value="stats" className="mt-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                          <Card className="bg-black/20 border-cyan-500/20">
-                            <CardHeader className="pb-2">
-                              <CardTitle className="text-sm text-cyan-200">Total Questions</CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                              <p className="text-2xl font-bold text-white">{questionStats.totalQuestions}</p>
-                            </CardContent>
-                          </Card>
-                          
-                          <Card className="bg-black/20 border-cyan-500/20">
-                            <CardHeader className="pb-2">
-                              <CardTitle className="text-sm text-cyan-200">Total Topics</CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                              <p className="text-2xl font-bold text-white">{questionStats.totalTopics}</p>
-                            </CardContent>
-                          </Card>
-                          
-                          <Card className="bg-black/20 border-cyan-500/20">
-                            <CardHeader className="pb-2">
-                              <CardTitle className="text-sm text-cyan-200">Difficulty Distribution</CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-1">
-                              <div className="flex justify-between">
-                                <span className="text-cyan-100">Easy:</span>
-                                <span className="text-white">{questionStats.difficultyDistribution.easy}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-cyan-100">Medium:</span>
-                                <span className="text-white">{questionStats.difficultyDistribution.medium}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-cyan-100">Hard:</span>
-                                <span className="text-white">{questionStats.difficultyDistribution.hard}</span>
-                              </div>
-                            </CardContent>
-                          </Card>
+                    <TabsContent value="stats" className="mt-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <Card className="bg-black/20 border-cyan-500/20">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-sm text-cyan-200">Total Questions</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <p className="text-2xl font-bold text-white">{generatedQuestions.length}</p>
+                          </CardContent>
+                        </Card>
+                        
+                        <Card className="bg-black/20 border-cyan-500/20">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-sm text-cyan-200">From Question Bank</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <p className="text-2xl font-bold text-green-400">
+                              {generatedQuestions.filter(q => q.source === 'processed_data').length}
+                            </p>
+                          </CardContent>
+                        </Card>
+                        
+                        <Card className="bg-black/20 border-cyan-500/20">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-sm text-cyan-200">AI Generated</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <p className="text-2xl font-bold text-blue-400">
+                              {generatedQuestions.filter(q => q.source === 'ai_generated').length}
+                            </p>
+                          </CardContent>
+                        </Card>
+                        
+                        <Card className="bg-black/20 border-cyan-500/20">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-sm text-cyan-200">Avg. Similarity</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <p className="text-2xl font-bold text-white">
+                              {(() => {
+                                const withSimilarity = generatedQuestions.filter(q => q.similarity);
+                                if (withSimilarity.length === 0) return "N/A";
+                                const avg = withSimilarity.reduce((sum, q) => sum + q.similarity!, 0) / withSimilarity.length;
+                                return `${(avg * 100).toFixed(1)}%`;
+                              })()}
+                            </p>
+                          </CardContent>
+                        </Card>
+                      </div>
+                      
+                      <div className="mt-6">
+                        <h3 className="text-lg font-medium text-white mb-4">Difficulty Distribution</h3>
+                        <div className="grid grid-cols-3 gap-4">
+                          {['easy', 'medium', 'hard'].map(difficulty => {
+                            const count = generatedQuestions.filter(q => q.difficulty === difficulty).length;
+                            const percentage = generatedQuestions.length > 0 ? (count / generatedQuestions.length * 100).toFixed(1) : 0;
+                            return (
+                              <Card key={difficulty} className="bg-black/20 border-cyan-500/20">
+                                <CardContent className="p-4 text-center">
+                                  <p className="text-sm text-cyan-200 capitalize">{difficulty}</p>
+                                  <p className="text-xl font-bold text-white">{count}</p>
+                                  <p className="text-xs text-cyan-300">{percentage}%</p>
+                                </CardContent>
+                              </Card>
+                            );
+                          })}
                         </div>
-                      </TabsContent>
-                    )}
+                      </div>
+                    </TabsContent>
                   </Tabs>
                 )}
               </CardContent>
