@@ -1,4 +1,4 @@
-// src/lib/api.ts - Enhanced API with upload functionality
+// src/lib/api.ts - Enhanced API with question paper endpoints
 import axios from 'axios';
 import { API_BASE_URL, AUTH_CONFIG, REQUEST_TIMEOUT } from '@/config/appConfig';
 
@@ -98,6 +98,9 @@ export const uploadAPI = {
     api.get(`/upload/processed-data/${courseId}`),
   
   getMyUploads: () => api.get('/upload/my-uploads'),
+  
+  getCourseHistory: (courseId: string) => 
+    api.get(`/upload/course-history/${courseId}`),
 };
 
 // Question Generation API endpoints
@@ -120,5 +123,32 @@ export const questionAPI = {
   getQuestionStats: (courseId: string) => api.get(`/questions/stats/${courseId}`),
 };
 
+// Question Paper API endpoints (NEW)
+export const questionPaperAPI = {
+  saveQuestionPaper: (paperData: {
+    courseId: string;
+    examType: string;
+    semester: string;
+    title: string;
+    content: string;
+    questions: any[];
+    totalMarks: number;
+    totalQuestions: number;
+    generationSource: string;
+    processedDataUsed?: string;
+  }) => api.post('/question-papers', paperData),
+  
+  getMyQuestionPapers: () => api.get('/question-papers'),
+  
+  getQuestionPaper: (paperId: string) => api.get(`/question-papers/${paperId}`),
+  
+  trackDownload: (paperId: string) => api.put(`/question-papers/${paperId}/download`),
+  
+  deleteQuestionPaper: (paperId: string) => api.delete(`/question-papers/${paperId}`),
+  
+  getCourseQuestionPapers: (courseId: string) => api.get(`/question-papers/course/${courseId}`),
+  
+  getQuestionPaperStats: () => api.get('/question-papers/stats'),
+};
 
 export default api;

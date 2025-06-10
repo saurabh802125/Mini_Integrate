@@ -1,4 +1,4 @@
-// src/pages/GenerateQuestions.tsx - Updated with cleaner question format
+// src/pages/GenerateQuestions.tsx - Updated with question paper saving and download tracking
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -10,8 +10,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
-import { ArrowLeft, Download, Loader2, Database, Bot, BarChart3, FileText, Shuffle } from "lucide-react";
-import { questionAPI, uploadAPI } from "@/lib/api";
+import { ArrowLeft, Download, Loader2, Database, Bot, BarChart3, FileText, Shuffle, Save } from "lucide-react";
+import { questionAPI, uploadAPI, questionPaperAPI } from "@/lib/api";
 import NetworkGridBackground from "@/components/NetworkGridBackground";
 
 interface QuestionConfig {
@@ -74,6 +74,8 @@ const GenerateQuestions = () => {
   const [generatedQuestions, setGeneratedQuestions] = useState<GeneratedQuestion[]>([]);
   const [questionPaperText, setQuestionPaperText] = useState<string>("");
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [savedPaperId, setSavedPaperId] = useState<string | null>(null);
   const [hasProcessedData, setHasProcessedData] = useState<boolean>(false);
   const [processedQuestions, setProcessedQuestions] = useState<ProcessedQuestion[]>([]);
   const [processedTopics, setProcessedTopics] = useState<ProcessedTopic[]>([]);
@@ -120,8 +122,8 @@ const GenerateQuestions = () => {
         setProcessedTopics(response.data.topics || []);
         
         toast({
-          title: "Processed data loaded",
-          description: `Found ${response.data.questions.length} questions and ${response.data.topics?.length || 0} topics from your question bank`,
+          title: "Latest processed data loaded",
+          description: `Found ${response.data.questions.length} questions and ${response.data.topics?.length || 0} topics from your latest question bank upload`,
         });
       } else {
         setHasProcessedData(false);
@@ -141,6 +143,8 @@ const GenerateQuestions = () => {
     questionConfigs: QuestionConfig[]
   ): GeneratedQuestion[] => {
     const generated: GeneratedQuestion[] = [];
+    
+    console.log(`Processing ${processedQuestions.length} questions and ${processedTopics.length} topics`);
     
     if (examConfig.examType === 'CIE') {
       // Generate CIE questions (3 sections)
@@ -306,7 +310,7 @@ const GenerateQuestions = () => {
       // Simulate progressive generation
       const progressSteps = [
         { progress: 20, message: "Analyzing question configurations..." },
-        { progress: 40, message: "Matching questions from your question bank..." },
+        { progress: 40, message: "Matching questions from your latest question bank..." },
         { progress: 60, message: "Selecting best matching questions..." },
         { progress: 80, message: "Generating fallback questions..." },
         { progress: 100, message: "Formatting question paper..." }
@@ -333,7 +337,7 @@ const GenerateQuestions = () => {
       
       toast({
         title: "Questions Generated Successfully",
-        description: `Generated ${questions.length} questions (${processedDataCount} from your question bank, ${aiGeneratedCount} AI-generated)`,
+        description: `Generated ${questions.length} questions (${processedDataCount} from your latest question bank, ${aiGeneratedCount} AI-generated)`,
       });
       
     } catch (error: any) {
@@ -345,6 +349,55 @@ const GenerateQuestions = () => {
     } finally {
       setIsGenerating(false);
       setGenerationProgress(0);
+    }
+  };
+
+  const saveQuestionPaper = async () => {
+    if (!examData || !questionPaperText) return;
+    
+    setIsSaving(true);
+    
+    try {
+      const totalMarks = generatedQuestions.reduce((sum, q) => sum + q.marks, 0);
+      const processedDataCount = generatedQuestions.filter(q => q.source === 'processed_data').length;
+      const aiGeneratedCount = generatedQuestions.filter(q => q.source === 'ai_generated').length;
+      
+      let generationSource = 'ai_generated';
+      if (processedDataCount > 0 && aiGeneratedCount > 0) {
+        generationSource = 'hybrid';
+      } else if (processedDataCount > 0) {
+        generationSource = 'processed_data';
+      }
+      
+      const paperData = {
+        courseId: examData.examConfig.courseId,
+        examType: examData.examConfig.examType,
+        semester: examData.examConfig.semester,
+        title: `${examData.examConfig.examType} - ${examData.examConfig.course} - Semester ${examData.examConfig.semester}`,
+        content: questionPaperText,
+        questions: generatedQuestions,
+        totalMarks,
+        totalQuestions: generatedQuestions.length,
+        generationSource,
+        processedDataUsed: hasProcessedData ? examData.examConfig.courseId : undefined
+      };
+      
+      const response = await questionPaperAPI.saveQuestionPaper(paperData);
+      setSavedPaperId(response.data.questionPaper._id);
+      
+      toast({
+        title: "Question Paper Saved",
+        description: "Your question paper has been saved successfully and is visible on your dashboard.",
+      });
+      
+    } catch (error: any) {
+      toast({
+        title: "Save Failed",
+        description: "Failed to save question paper. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -372,7 +425,7 @@ const GenerateQuestions = () => {
     questionPaper += `Course: ${courseName} (${examConfig.course})\n`;
     questionPaper += `Semester: ${examConfig.semester}\n`;
     questionPaper += `Date: ${currentDate}\n`;
-    questionPaper += `Duration: ${examConfig.examType === "CIE" ? "1 Hour" : "3 Hours"}\n`;
+    questionPaper += `Duration: ${examConfig.examType === "CIE" ? "1.5 Hours" : "3 Hours"}\n`;
     questionPaper += `Maximum Marks: ${examConfig.examType === "CIE" ? "30" : "100"}\n\n`;
     
     questionPaper += `Instructions:\n`;
@@ -448,8 +501,17 @@ const GenerateQuestions = () => {
     return questionPaper;
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!questionPaperText || !examData) return;
+    
+    // Track download if paper is saved
+    if (savedPaperId) {
+      try {
+        await questionPaperAPI.trackDownload(savedPaperId);
+      } catch (error) {
+        console.error('Failed to track download:', error);
+      }
+    }
     
     const blob = new Blob([questionPaperText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -471,6 +533,7 @@ const GenerateQuestions = () => {
   };
 
   const handleRegenerateQuestions = () => {
+    setSavedPaperId(null); // Reset saved paper ID when regenerating
     generateQuestionsWithProcessedData();
   };
 
@@ -515,7 +578,7 @@ const GenerateQuestions = () => {
                   {hasProcessedData ? (
                     <>
                       <Database className="h-5 w-5 mr-2 text-green-400" />
-                      Question Bank Data Available
+                      Latest Question Bank Data Available
                     </>
                   ) : (
                     <>
@@ -538,7 +601,7 @@ const GenerateQuestions = () => {
                   <div>
                     <p className="text-sm text-cyan-200">Data Source</p>
                     <Badge variant={hasProcessedData ? "default" : "secondary"}>
-                      {hasProcessedData ? "Processed Question Bank" : "AI Generation"}
+                      {hasProcessedData ? "Latest Question Bank" : "AI Generation"}
                     </Badge>
                   </div>
                 </div>
@@ -546,7 +609,7 @@ const GenerateQuestions = () => {
                 {hasProcessedData && (
                   <Alert className="mt-4 bg-green-900/20 border-green-500/30">
                     <AlertDescription className="text-green-100">
-                      <strong>Smart Selection Active:</strong> Questions will be intelligently selected from your question bank based on difficulty, marks, topics, and similarity scores.
+                      <strong>Using Latest Data:</strong> Questions will be intelligently selected from your most recently uploaded question bank, ensuring you always use the latest syllabus and questions.
                     </AlertDescription>
                   </Alert>
                 )}
@@ -559,6 +622,27 @@ const GenerateQuestions = () => {
                 <CardTitle className="flex justify-between items-center text-white">
                   <span>Question Paper Generation</span>
                   <div className="flex space-x-2">
+                    {questionPaperText && !savedPaperId && (
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={saveQuestionPaper}
+                        disabled={isSaving}
+                        className="text-cyan-100 hover:bg-cyan-900/30 hover:text-white border-cyan-500/30"
+                      >
+                        {isSaving ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Saving...
+                          </>
+                        ) : (
+                          <>
+                            <Save className="h-4 w-4 mr-2" />
+                            Save Paper
+                          </>
+                        )}
+                      </Button>
+                    )}
                     {questionPaperText && (
                       <Button 
                         variant="outline" 
@@ -585,6 +669,14 @@ const GenerateQuestions = () => {
                 </CardTitle>
               </CardHeader>
               <CardContent>
+                {savedPaperId && (
+                  <Alert className="mb-4 bg-green-900/20 border-green-500/30">
+                    <AlertDescription className="text-green-100">
+                      <strong>✅ Question Paper Saved!</strong> This question paper is now saved to your dashboard and can be accessed anytime.
+                    </AlertDescription>
+                  </Alert>
+                )}
+
                 {!questionPaperText && !isGenerating && (
                   <div className="text-center py-8">
                     <FileText className="h-12 w-12 mx-auto text-cyan-400 mb-4" />
@@ -607,7 +699,7 @@ const GenerateQuestions = () => {
                       <Progress value={generationProgress} className="w-full" />
                       <p className="text-sm text-cyan-200/70 mt-2 text-center">
                         {generationProgress < 40 && "Analyzing configurations..."}
-                        {generationProgress >= 40 && generationProgress < 60 && "Matching from question bank..."}
+                        {generationProgress >= 40 && generationProgress < 60 && "Matching from latest question bank..."}
                         {generationProgress >= 60 && generationProgress < 80 && "Selecting best questions..."}
                         {generationProgress >= 80 && "Finalizing question paper..."}
                       </p>
@@ -639,7 +731,7 @@ const GenerateQuestions = () => {
                             <CardContent className="p-4">
                               <div className="flex justify-between items-start mb-2">
                                 <Badge variant={question.source === 'processed_data' ? 'default' : 'secondary'}>
-                                  {question.source === 'processed_data' ? '📚 From Question Bank' : '🤖 AI Generated'}
+                                  {question.source === 'processed_data' ? '📚 From Latest Question Bank' : '🤖 AI Generated'}
                                 </Badge>
                                 <div className="flex space-x-2">
                                   <Badge variant="outline" className="text-white border-white/30">

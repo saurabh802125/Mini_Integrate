@@ -1,4 +1,4 @@
-// src/pages/Dashboard.tsx - Complete Enhanced Dashboard
+// src/pages/Dashboard.tsx - Complete Enhanced Dashboard with Question Papers and Logout
 
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { coursesAPI, examsAPI, uploadAPI } from "@/lib/api";
+import { coursesAPI, examsAPI, uploadAPI, questionPaperAPI } from "@/lib/api";
 import { useToast } from "@/components/ui/use-toast";
 import { 
   Loader2, 
@@ -24,7 +24,10 @@ import {
   Clock,
   BarChart3,
   Settings,
-  User
+  User,
+  Download,
+  Eye,
+  Trash2
 } from "lucide-react";
 import NetworkGridBackground from "@/components/NetworkGridBackground";
 
@@ -51,6 +54,27 @@ interface ProcessedUpload {
   topicsCount: number;
   processedAt?: string;
   createdAt: string;
+  uploadedAt: string;
+  version: number;
+  isActive: boolean;
+  originalFileNames?: {
+    questionBank: string;
+    syllabus: string;
+  };
+}
+
+interface QuestionPaper {
+  _id: string;
+  course: Course;
+  examType: string;
+  semester: string;
+  title: string;
+  totalMarks: number;
+  totalQuestions: number;
+  generationSource: string;
+  downloadCount: number;
+  lastDownloadedAt?: string;
+  createdAt: string;
 }
 
 const Dashboard = () => {
@@ -58,12 +82,15 @@ const Dashboard = () => {
   const [courses, setCourses] = useState<Course[]>([]);
   const [exams, setExams] = useState<Exam[]>([]);
   const [uploads, setUploads] = useState<ProcessedUpload[]>([]);
+  const [questionPapers, setQuestionPapers] = useState<QuestionPaper[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [stats, setStats] = useState({
     totalExams: 0,
     totalUploads: 0,
     completedUploads: 0,
-    totalQuestions: 0
+    totalQuestions: 0,
+    totalQuestionPapers: 0,
+    totalDownloads: 0
   });
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -74,25 +101,30 @@ const Dashboard = () => {
         setIsLoading(true);
         
         // Fetch all data in parallel
-        const [coursesResponse, examsResponse, uploadsResponse] = await Promise.all([
+        const [coursesResponse, examsResponse, uploadsResponse, questionPapersResponse] = await Promise.all([
           coursesAPI.getAllCourses().catch(() => ({ data: [] })),
           examsAPI.getEducatorExams().catch(() => ({ data: [] })),
-          uploadAPI.getMyUploads().catch(() => ({ data: [] }))
+          uploadAPI.getMyUploads().catch(() => ({ data: [] })),
+          questionPaperAPI.getMyQuestionPapers().catch(() => ({ data: [] }))
         ]);
 
         setCourses(coursesResponse.data);
         setExams(examsResponse.data);
         setUploads(uploadsResponse.data);
+        setQuestionPapers(questionPapersResponse.data);
 
         // Calculate statistics
         const completedUploads = uploadsResponse.data.filter((u: ProcessedUpload) => u.status === 'COMPLETED');
         const totalQuestions = completedUploads.reduce((sum: number, u: ProcessedUpload) => sum + u.questionsCount, 0);
+        const totalDownloads = questionPapersResponse.data.reduce((sum: number, p: QuestionPaper) => sum + p.downloadCount, 0);
 
         setStats({
           totalExams: examsResponse.data.length,
           totalUploads: uploadsResponse.data.length,
           completedUploads: completedUploads.length,
-          totalQuestions
+          totalQuestions,
+          totalQuestionPapers: questionPapersResponse.data.length,
+          totalDownloads
         });
 
       } catch (error) {
@@ -145,6 +177,31 @@ const Dashboard = () => {
     });
   };
 
+  const handleViewQuestionPaper = (paper: QuestionPaper) => {
+    // You can implement a detailed view later
+    toast({
+      title: "Feature coming soon",
+      description: "Question paper detailed view will be available in the next update.",
+    });
+  };
+
+  const handleDeleteQuestionPaper = async (paperId: string) => {
+    try {
+      await questionPaperAPI.deleteQuestionPaper(paperId);
+      setQuestionPapers(prev => prev.filter(p => p._id !== paperId));
+      toast({
+        title: "Question paper deleted",
+        description: "The question paper has been removed successfully.",
+      });
+    } catch (error) {
+      toast({
+        title: "Delete failed",
+        description: "Failed to delete question paper. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const getTimeAgo = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -168,6 +225,19 @@ const Dashboard = () => {
         return <Clock className="h-4 w-4 text-red-400" />;
       default:
         return <Clock className="h-4 w-4 text-gray-400" />;
+    }
+  };
+
+  const getGenerationSourceIcon = (source: string) => {
+    switch (source) {
+      case 'processed_data':
+        return <Database className="h-4 w-4 text-green-400" />;
+      case 'ai_generated':
+        return <PenLine className="h-4 w-4 text-blue-400" />;
+      case 'hybrid':
+        return <BarChart3 className="h-4 w-4 text-purple-400" />;
+      default:
+        return <FileText className="h-4 w-4 text-gray-400" />;
     }
   };
 
@@ -210,7 +280,7 @@ const Dashboard = () => {
               <Button 
                 variant="outline" 
                 onClick={handleLogout} 
-                className="bg-transparent border-cyan-500/50 text-cyan-100 hover:bg-cyan-900/30"
+                className="bg-transparent border-red-500/50 text-red-100 hover:bg-red-900/30"
               >
                 <LogOut className="w-4 h-4 mr-2" />
                 Logout
@@ -219,7 +289,7 @@ const Dashboard = () => {
           </div>
 
           {/* Quick Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <Card className="bg-black/40 border-cyan-400/30 backdrop-blur-sm shadow-lg">
               <CardContent className="p-4">
                 <div className="flex items-center">
@@ -263,6 +333,30 @@ const Dashboard = () => {
                   <div className="ml-3">
                     <p className="text-sm font-medium text-yellow-200">My Courses</p>
                     <p className="text-2xl font-bold text-white">{currentUser?.courses?.length || 0}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-black/40 border-pink-400/30 backdrop-blur-sm shadow-lg">
+              <CardContent className="p-4">
+                <div className="flex items-center">
+                  <PenLine className="h-8 w-8 text-pink-400" />
+                  <div className="ml-3">
+                    <p className="text-sm font-medium text-pink-200">Question Papers</p>
+                    <p className="text-2xl font-bold text-white">{stats.totalQuestionPapers}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-black/40 border-orange-400/30 backdrop-blur-sm shadow-lg">
+              <CardContent className="p-4">
+                <div className="flex items-center">
+                  <Download className="h-8 w-8 text-orange-400" />
+                  <div className="ml-3">
+                    <p className="text-sm font-medium text-orange-200">Downloads</p>
+                    <p className="text-2xl font-bold text-white">{stats.totalDownloads}</p>
                   </div>
                 </div>
               </CardContent>
@@ -337,7 +431,7 @@ const Dashboard = () => {
           </div>
 
           {/* Content Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-6">
             
             {/* My Courses */}
             <Card className="bg-black/40 border-cyan-400/30 backdrop-blur-sm shadow-lg">
@@ -351,7 +445,7 @@ const Dashboard = () => {
               <CardContent>
                 {currentUser?.courses?.length > 0 ? (
                   <div className="space-y-3">
-                    {currentUser.courses.slice(0, 5).map((courseId: string) => {
+                    {currentUser.courses.slice(0, 3).map((courseId: string) => {
                       const course = courses.find(c => c._id === courseId);
                       return (
                         <div key={courseId} className="flex items-center justify-between p-3 bg-black/30 rounded-md border border-cyan-500/20">
@@ -369,9 +463,9 @@ const Dashboard = () => {
                         </div>
                       );
                     })}
-                    {currentUser.courses.length > 5 && (
+                    {currentUser.courses.length > 3 && (
                       <p className="text-sm text-cyan-300 text-center">
-                        +{currentUser.courses.length - 5} more courses
+                        +{currentUser.courses.length - 3} more courses
                       </p>
                     )}
                   </div>
@@ -380,6 +474,72 @@ const Dashboard = () => {
                     <BookOpen className="h-12 w-12 mx-auto text-cyan-400/50 mb-2" />
                     <p className="text-cyan-200">No courses assigned yet</p>
                     <p className="text-sm text-cyan-300">Contact admin to assign courses</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Recent Question Papers */}
+            <Card className="bg-black/40 border-pink-400/30 backdrop-blur-sm shadow-lg">
+              <CardHeader>
+                <CardTitle className="flex items-center text-white">
+                  <PenLine className="mr-2 h-5 w-5 text-pink-400" />
+                  Question Papers
+                </CardTitle>
+                <CardDescription className="text-pink-200">Your saved question papers</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {questionPapers.length > 0 ? (
+                  <div className="space-y-3">
+                    {questionPapers.slice(0, 4).map((paper) => (
+                      <div 
+                        key={paper._id} 
+                        className="p-3 bg-black/30 rounded-md border border-pink-500/20"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center space-x-2">
+                            {getGenerationSourceIcon(paper.generationSource)}
+                            <div>
+                              <p className="font-medium text-white text-sm">
+                                {paper.examType} - {paper.course.code}
+                              </p>
+                              <p className="text-xs text-pink-200">
+                                Semester {paper.semester} • {getTimeAgo(paper.createdAt)}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleViewQuestionPaper(paper)}
+                              className="h-6 w-6 p-0 text-pink-300 hover:text-white"
+                            >
+                              <Eye className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleDeleteQuestionPaper(paper._id)}
+                              className="h-6 w-6 p-0 text-red-300 hover:text-red-100"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="flex justify-between text-xs text-pink-200">
+                          <span>{paper.totalQuestions} questions</span>
+                          <span>{paper.totalMarks} marks</span>
+                          <span>{paper.downloadCount} downloads</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-6">
+                    <PenLine className="h-12 w-12 mx-auto text-pink-400/50 mb-2" />
+                    <p className="text-pink-200">No question papers saved</p>
+                    <p className="text-sm text-pink-300">Create and save question papers</p>
                   </div>
                 )}
               </CardContent>
@@ -446,9 +606,15 @@ const Dashboard = () => {
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center space-x-2">
                             {getStatusIcon(upload.status)}
-                            <p className="font-medium text-white text-sm">
-                              {upload.course.name}
-                            </p>
+                            <div>
+                              <p className="font-medium text-white text-sm">
+                                {upload.course.name}
+                              </p>
+                              <p className="text-xs text-green-200">
+                                {upload.isActive && <Badge variant="secondary" className="text-xs mr-1">Latest</Badge>}
+                                v{upload.version} • {getTimeAgo(upload.uploadedAt)}
+                              </p>
+                            </div>
                           </div>
                           <Badge variant={upload.status === 'COMPLETED' ? 'default' : 'secondary'} className="text-xs">
                             {upload.status}
@@ -519,8 +685,40 @@ const Dashboard = () => {
             <AlertDescription className="text-blue-100">
               <strong>💡 Pro Tip:</strong> Upload your question bank and syllabus first to enable smart question selection. 
               The AI will analyze your documents and suggest the most relevant questions based on difficulty, topics, and learning objectives.
+              Your saved question papers are displayed above and can be downloaded anytime!
             </AlertDescription>
           </Alert>
+
+          {/* Logout Section */}
+          <Card className="bg-black/40 border-red-400/30 backdrop-blur-sm shadow-lg">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center">
+                <LogOut className="mr-2 h-5 w-5 text-red-400" />
+                Session Management
+              </CardTitle>
+              <CardDescription className="text-red-200">
+                Securely end your current session
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-white mb-1">Ready to sign out?</p>
+                  <p className="text-sm text-red-200">
+                    Make sure you've saved all your work before logging out.
+                  </p>
+                </div>
+                <Button 
+                  onClick={handleLogout}
+                  variant="destructive"
+                  className="bg-red-600 hover:bg-red-500"
+                >
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Logout Safely
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </NetworkGridBackground>

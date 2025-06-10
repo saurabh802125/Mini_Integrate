@@ -10,6 +10,7 @@ const coursesRoutes = require('./routes/courses');
 const examsRoutes = require('./routes/exams');
 const questionsRoutes = require('./routes/questions');
 const fileUploadRoutes = require('./routes/fileUpload');
+const questionPaperRoutes = require('./routes/questionPapers'); // New route
 
 // Initialize express app
 const app = express();
@@ -29,6 +30,7 @@ app.use('/api/courses', coursesRoutes);
 app.use('/api/exams', examsRoutes);
 app.use('/api/questions', questionsRoutes);
 app.use('/api/upload', fileUploadRoutes);
+app.use('/api/question-papers', questionPaperRoutes); // New route
 
 // Health check route
 app.get('/health', (req, res) => {

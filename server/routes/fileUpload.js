@@ -1,4 +1,4 @@
-// server/routes/fileUpload.js - CORRECTED VERSION
+// server/routes/fileUpload.js - UPDATED VERSION with latest data handling
 
 const express = require('express');
 const multer = require('multer');
@@ -72,15 +72,20 @@ router.post('/process-documents', auth, upload.fields([
     console.log('Question Bank:', questionBankFile.filename);
     console.log('Syllabus:', syllabusFile.filename);
     
-    // Create processed data record (REMOVED FileUpload model usage)
+    // Create processed data record with original file names
     const processedData = new ProcessedData({
       educator: req.educator._id,
       course: courseId,
       questionBankFile: questionBankFile.filename,
       syllabusFile: syllabusFile.filename,
+      originalFileNames: {
+        questionBank: questionBankFile.originalname,
+        syllabus: syllabusFile.originalname
+      },
       questions: [],
       topics: [],
-      processingStatus: 'PENDING'
+      processingStatus: 'PENDING',
+      uploadedAt: new Date() // Explicitly set upload time
     });
     
     await processedData.save();
@@ -222,7 +227,11 @@ router.get('/processing-status/:processId', auth, async (req, res) => {
       questionsCount: processedData.questions.length,
       topicsCount: processedData.topics.length,
       processedAt: processedData.processedAt,
-      createdAt: processedData.createdAt
+      createdAt: processedData.createdAt,
+      uploadedAt: processedData.uploadedAt,
+      version: processedData.version,
+      isActive: processedData.isActive,
+      originalFileNames: processedData.originalFileNames
     });
     
   } catch (error) {
@@ -232,19 +241,29 @@ router.get('/processing-status/:processId', auth, async (req, res) => {
 });
 
 // @route   GET /api/upload/processed-data/:courseId
-// @desc    Get processed data for a course
+// @desc    Get LATEST processed data for a course (fixes the syllabus issue)
 // @access  Private
 router.get('/processed-data/:courseId', auth, async (req, res) => {
   try {
+    // Get the LATEST active processed data for this course
     const processedData = await ProcessedData.findOne({
       educator: req.educator._id,
       course: req.params.courseId,
-      processingStatus: 'COMPLETED'
-    }).populate('course', 'name code');
+      processingStatus: 'COMPLETED',
+      isActive: true // Only get active (latest) version
+    })
+    .populate('course', 'name code')
+    .sort({ uploadedAt: -1 }); // Sort by upload time, latest first
     
     if (!processedData) {
       return res.status(404).json({ message: 'No processed data found for this course' });
     }
+    
+    console.log(`✅ Returning LATEST processed data for course ${req.params.courseId}:`);
+    console.log(`   - Version: ${processedData.version}`);
+    console.log(`   - Uploaded: ${processedData.uploadedAt}`);
+    console.log(`   - Questions: ${processedData.questions.length}`);
+    console.log(`   - Topics: ${processedData.topics.length}`);
     
     res.json(processedData);
     
@@ -255,19 +274,39 @@ router.get('/processed-data/:courseId', auth, async (req, res) => {
 });
 
 // @route   GET /api/upload/my-uploads
-// @desc    Get all uploads for current educator
+// @desc    Get all uploads for current educator (sorted by latest first)
 // @access  Private
 router.get('/my-uploads', auth, async (req, res) => {
   try {
     const uploads = await ProcessedData.find({ educator: req.educator._id })
       .populate('course', 'name code')
-      .sort({ createdAt: -1 });
+      .sort({ uploadedAt: -1 }); // Sort by upload time, latest first
     
     res.json(uploads);
     
   } catch (error) {
     console.error('❌ Get uploads error:', error);
     res.status(500).json({ message: 'Failed to get uploads' });
+  }
+});
+
+// @route   GET /api/upload/course-history/:courseId
+// @desc    Get upload history for a specific course
+// @access  Private
+router.get('/course-history/:courseId', auth, async (req, res) => {
+  try {
+    const uploads = await ProcessedData.find({
+      educator: req.educator._id,
+      course: req.params.courseId
+    })
+      .populate('course', 'name code')
+      .sort({ uploadedAt: -1 });
+    
+    res.json(uploads);
+    
+  } catch (error) {
+    console.error('❌ Get course history error:', error);
+    res.status(500).json({ message: 'Failed to get course history' });
   }
 });
 
