@@ -1,4 +1,4 @@
-// src/pages/GenerateQuestions.tsx - Enhanced with your exact processed data structure
+// src/pages/GenerateQuestions.tsx - Updated with cleaner question format
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -372,13 +372,14 @@ const GenerateQuestions = () => {
     questionPaper += `Course: ${courseName} (${examConfig.course})\n`;
     questionPaper += `Semester: ${examConfig.semester}\n`;
     questionPaper += `Date: ${currentDate}\n`;
-    questionPaper += `Duration: ${examConfig.examType === "CIE" ? "1 Hour 30 Minutes" : "3 Hours"}\n`;
-    questionPaper += `Maximum Marks: ${examConfig.examType === "CIE" ? "45" : "100"}\n\n`;
+    questionPaper += `Duration: ${examConfig.examType === "CIE" ? "1 Hour" : "3 Hours"}\n`;
+    questionPaper += `Maximum Marks: ${examConfig.examType === "CIE" ? "30" : "100"}\n\n`;
     
     questionPaper += `Instructions:\n`;
     if (examConfig.examType === "CIE") {
-      questionPaper += `• Answer all questions from all sections\n`;
+      questionPaper += `• Answer any TWO sections out of three\n`;
       questionPaper += `• Each section carries 15 marks\n`;
+      questionPaper += `• Total marks: 2 × 15 = 30 marks\n`;
       questionPaper += `• All parts of a question should be answered contiguously\n\n`;
     } else {
       questionPaper += `• Answer any one full question from each module\n`;
@@ -404,9 +405,6 @@ const GenerateQuestions = () => {
           const questionPart = question.questionId[1];
           questionPaper += `${section}${questionPart.toUpperCase()}. ${question.text}\n`;
           questionPaper += `    [${question.marks} Marks | ${question.difficulty} | ${question.bloomLevel}]\n`;
-          if (question.source === 'processed_data') {
-            questionPaper += `    [Source: Question Bank | Similarity: ${(question.similarity! * 100).toFixed(1)}%]\n`;
-          }
           questionPaper += `\n`;
         }
         
@@ -433,9 +431,6 @@ const GenerateQuestions = () => {
             const questionPart = question.questionId.slice(-1);
             questionPaper += `${questionNum}${questionPart.toUpperCase()}. ${question.text}\n`;
             questionPaper += `    [${question.marks} Marks | ${question.difficulty} | ${question.bloomLevel}]\n`;
-            if (question.source === 'processed_data') {
-              questionPaper += `    [Source: Question Bank | Similarity: ${(question.similarity! * 100).toFixed(1)}%]\n`;
-            }
             questionPaper += `\n`;
           }
           
@@ -646,20 +641,26 @@ const GenerateQuestions = () => {
                                 <Badge variant={question.source === 'processed_data' ? 'default' : 'secondary'}>
                                   {question.source === 'processed_data' ? '📚 From Question Bank' : '🤖 AI Generated'}
                                 </Badge>
-                                <Badge variant="outline" className="text-white border-white/30">
-                                  {question.marks} marks
-                                </Badge>
+                                <div className="flex space-x-2">
+                                  <Badge variant="outline" className="text-white border-white/30">
+                                    {question.marks} marks
+                                  </Badge>
+                                  <Badge variant="outline" className="text-white border-white/30">
+                                    {question.difficulty}
+                                  </Badge>
+                                  <Badge variant="outline" className="text-white border-white/30">
+                                    {question.bloomLevel}
+                                  </Badge>
+                                </div>
                               </div>
                               <p className="text-white mb-2 font-medium">Q{question.questionId}: {question.text}</p>
-                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                                <span className="text-cyan-200">Difficulty: {question.difficulty}</span>
-                                <span className="text-cyan-200">Bloom: {question.bloomLevel}</span>
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
                                 <span className="text-cyan-200">Unit: {question.unit}</span>
-                                {question.similarity && (
-                                  <span className="text-green-300">Match: {(question.similarity * 100).toFixed(1)}%</span>
+                                <span className="text-cyan-200">Topic: {question.topic}</span>
+                                {question.co && (
+                                  <span className="text-cyan-200">CO: {question.co}</span>
                                 )}
                               </div>
-                              <p className="text-xs text-cyan-300 mt-1">Topic: {question.topic}</p>
                             </CardContent>
                           </Card>
                         ))}
@@ -701,16 +702,11 @@ const GenerateQuestions = () => {
                         
                         <Card className="bg-black/20 border-cyan-500/20">
                           <CardHeader className="pb-2">
-                            <CardTitle className="text-sm text-cyan-200">Avg. Similarity</CardTitle>
+                            <CardTitle className="text-sm text-cyan-200">Total Marks</CardTitle>
                           </CardHeader>
                           <CardContent>
                             <p className="text-2xl font-bold text-white">
-                              {(() => {
-                                const withSimilarity = generatedQuestions.filter(q => q.similarity);
-                                if (withSimilarity.length === 0) return "N/A";
-                                const avg = withSimilarity.reduce((sum, q) => sum + q.similarity!, 0) / withSimilarity.length;
-                                return `${(avg * 100).toFixed(1)}%`;
-                              })()}
+                              {generatedQuestions.reduce((sum, q) => sum + q.marks, 0)}
                             </p>
                           </CardContent>
                         </Card>

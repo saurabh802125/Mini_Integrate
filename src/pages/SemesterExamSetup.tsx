@@ -7,7 +7,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/ui/use-toast";
-import { ArrowLeft } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { ArrowLeft, Database, Bot, Loader2 } from "lucide-react";
+import { uploadAPI, coursesAPI } from "@/lib/api";
 import NetworkGridBackground from "@/components/NetworkGridBackground";
 import TopicSelector from "@/components/TopicSelector";
 
@@ -20,6 +23,18 @@ interface QuestionConfig {
   topic: string; // For topic-based question generation
 }
 
+interface ProcessedTopic {
+  unit: string;
+  topic_id: number;
+  topic: string;
+}
+
+interface Course {
+  _id: string;
+  name: string;
+  code: string;
+}
+
 const SemesterExamSetup = () => {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
@@ -30,13 +45,18 @@ const SemesterExamSetup = () => {
     examType: string;
     semester: string;
     course: string;
-    topics?: string[];
+    courseId?: string;
     hasQuestionBank?: boolean;
   } | null>(null);
   
   const [questionConfigs, setQuestionConfigs] = useState<QuestionConfig[]>([]);
-  const [numQuestions, setNumQuestions] = useState<number>(5); // Default number of questions to generate
+  const [numQuestions, setNumQuestions] = useState<number>(5);
   const [availableTopics, setAvailableTopics] = useState<string[]>([]);
+  const [processedTopics, setProcessedTopics] = useState<ProcessedTopic[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [selectedCourseId, setSelectedCourseId] = useState<string>("");
+  const [hasProcessedData, setHasProcessedData] = useState<boolean>(false);
+  const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -44,12 +64,11 @@ const SemesterExamSetup = () => {
       return;
     }
     
-    // Get data passed from the previous page
     const state = location.state as {
       examType: string;
       semester: string;
       course: string;
-      topics?: string[];
+      courseId?: string;
       hasQuestionBank?: boolean;
     } | null;
     
@@ -65,23 +84,97 @@ const SemesterExamSetup = () => {
     
     setExamConfig(state);
     
-    // Set available topics from the parsed syllabus
-    if (state.topics && state.topics.length > 0) {
-      setAvailableTopics(state.topics);
-    } else {
-      // If no topics were parsed, use a default set based on OS course
-      setAvailableTopics([
-        "Introduction to Operating Systems",
-        "Process Management",
-        "Memory Management",
-        "File Systems",
-        "I/O Systems",
-        "Virtualization",
-        "Distributed Systems",
-        "Security and Protection"
-      ]);
-    }
+    // Initialize question configurations
+    initializeQuestionConfigs();
     
+    // Load data
+    loadInitialData(state);
+  }, [isAuthenticated, location.state, navigate, toast]);
+
+  const loadInitialData = async (state: any) => {
+    try {
+      setIsLoadingData(true);
+      
+      // First fetch courses
+      const coursesResponse = await coursesAPI.getAllCourses();
+      setCourses(coursesResponse.data);
+      
+      // Find the course ID
+      let courseId = state.courseId;
+      if (!courseId && state.course) {
+        const course = coursesResponse.data.find((c: Course) => c.code === state.course);
+        courseId = course?._id;
+      }
+      
+      if (courseId) {
+        setSelectedCourseId(courseId);
+        
+        // Load processed data for this course
+        await loadProcessedData(courseId);
+      } else {
+        console.log("No course ID found for SEE");
+        setHasProcessedData(false);
+        setDefaultTopics();
+      }
+    } catch (error) {
+      console.error("Error loading initial data for SEE:", error);
+      setHasProcessedData(false);
+      setDefaultTopics();
+    } finally {
+      setIsLoadingData(false);
+    }
+  };
+
+  const loadProcessedData = async (courseId: string) => {
+    try {
+      console.log("Loading processed data for SEE course:", courseId);
+      
+      const response = await uploadAPI.getProcessedData(courseId);
+      
+      if (response.data && response.data.questions.length > 0) {
+        console.log("SEE Processed data found:", response.data);
+        
+        setHasProcessedData(true);
+        setProcessedTopics(response.data.topics || []);
+        
+        // Extract unique topics from processed data
+        const topics = response.data.topics ? response.data.topics.map((t: ProcessedTopic) => t.topic) : [];
+        console.log("SEE Extracted topics:", topics);
+        
+        setAvailableTopics(topics);
+        
+        toast({
+          title: "Processed data loaded",
+          description: `Found ${response.data.questions.length} questions and ${topics.length} topics`,
+        });
+      } else {
+        console.log("No processed data found for SEE");
+        setHasProcessedData(false);
+        setDefaultTopics();
+      }
+    } catch (error) {
+      console.error("Error loading processed data for SEE:", error);
+      setHasProcessedData(false);
+      setDefaultTopics();
+    }
+  };
+
+  const setDefaultTopics = () => {
+    const defaultTopics = [
+      "Introduction to Operating Systems",
+      "Process Management",
+      "Memory Management",
+      "File Systems",
+      "I/O Systems",
+      "Virtualization",
+      "Distributed Systems",
+      "Security and Protection"
+    ];
+    console.log("Setting default topics for SEE:", defaultTopics);
+    setAvailableTopics(defaultTopics);
+  };
+
+  const initializeQuestionConfigs = () => {
     // Initialize question configuration for semester-end exam (10 sections, 3 questions each - a, b, c)
     const initialConfigs: QuestionConfig[] = [];
     for (let questionNum = 1; questionNum <= 10; questionNum++) {
@@ -100,7 +193,7 @@ const SemesterExamSetup = () => {
     }
     
     setQuestionConfigs(initialConfigs);
-  }, [isAuthenticated, location.state, navigate, toast]);
+  };
 
   const handleLevelChange = (questionId: string, level: string) => {
     setQuestionConfigs(prevConfigs => 
@@ -186,16 +279,24 @@ const SemesterExamSetup = () => {
     // Navigate to question generation page with the configuration
     navigate("/generate-questions", {
       state: {
-        examConfig,
+        examConfig: {
+          ...examConfig,
+          courseId: selectedCourseId
+        },
         questionConfigs,
         numQuestions,
-        useQuestionBank: examConfig?.hasQuestionBank || false
+        useQuestionBank: hasProcessedData
       }
     });
   };
 
   const goBack = () => {
-    navigate("/upload-documents", { state: examConfig });
+    navigate("/exam-type-selection", { 
+      state: examConfig?.hasQuestionBank ? { 
+        preSelectedCourse: examConfig.course,
+        hasQuestionBank: true 
+      } : undefined 
+    });
   };
 
   if (!examConfig) {
@@ -208,8 +309,23 @@ const SemesterExamSetup = () => {
     );
   }
 
+  if (isLoadingData) {
+    return (
+      <NetworkGridBackground>
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="bg-black/40 backdrop-blur-sm p-8 rounded-lg border border-cyan-500/30">
+            <Loader2 className="w-8 h-8 animate-spin text-cyan-400 mx-auto" />
+            <span className="mt-4 block text-white text-center">Loading SEE exam data...</span>
+          </div>
+        </div>
+      </NetworkGridBackground>
+    );
+  }
+
   // Group questions by CO for easier rendering
   const courseOutcomes = [1, 2, 3, 4, 5];
+
+  console.log("SEE Available topics in render:", availableTopics);
 
   return (
     <NetworkGridBackground>
@@ -231,7 +347,7 @@ const SemesterExamSetup = () => {
                 <CardTitle className="text-white">Exam Information</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <p className="text-sm font-medium text-cyan-300">Exam Type</p>
                     <p className="mt-1 text-white">{examConfig.examType === "CIE" ? "CIE" : "Semester End"}</p>
@@ -246,13 +362,46 @@ const SemesterExamSetup = () => {
                   </div>
                 </div>
                 
-                {examConfig.hasQuestionBank && (
-                  <div className="mt-4 p-3 bg-cyan-900/20 border border-cyan-500/30 rounded-md">
-                    <p className="text-cyan-100">
-                      <span className="font-medium">Using Question Bank:</span> Questions will be generated from your uploaded question bank based on the selected topics and difficulty levels.
+                <div className="mt-4 p-3 rounded-md border">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      {hasProcessedData ? (
+                        <>
+                          <Database className="h-5 w-5 text-green-400" />
+                          <Badge variant="default" className="bg-green-600">Processed Data Available</Badge>
+                        </>
+                      ) : (
+                        <>
+                          <Bot className="h-5 w-5 text-blue-400" />
+                          <Badge variant="secondary">AI Generation Mode</Badge>
+                        </>
+                      )}
+                    </div>
+                    <p className="text-sm text-cyan-200">
+                      {hasProcessedData 
+                        ? `${availableTopics.length} topics from your question bank`
+                        : "Questions will be generated using AI with default topics"
+                      }
                     </p>
                   </div>
-                )}
+                  
+                  {hasProcessedData && (
+                    <Alert className="mt-3 bg-green-900/20 border-green-500/30">
+                      <AlertDescription className="text-green-100">
+                        <strong>Smart Generation:</strong> Questions will be intelligently selected from your uploaded question bank based on difficulty, marks, and topics.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+
+                {/* Debug Information - Remove in production */}
+                <div className="mt-4 p-3 bg-yellow-900/20 border border-yellow-500/30 rounded-md">
+                  <p className="text-yellow-100 text-sm">
+                    <strong>SEE Debug Info:</strong> Available topics count: {availableTopics.length}
+                    <br />
+                    Topics: {availableTopics.join(", ")}
+                  </p>
+                </div>
               </CardContent>
             </Card>
             
@@ -284,7 +433,7 @@ const SemesterExamSetup = () => {
                                         topics={availableTopics}
                                         selectedTopic={question.topic}
                                         onChange={(topic) => handleTopicChange(question.questionId, topic)}
-                                        placeholder="Select topic for this question"
+                                        placeholder={availableTopics.length > 0 ? "Select topic for this question" : "No topics available"}
                                       />
                                     </div>
                                   
@@ -364,7 +513,10 @@ const SemesterExamSetup = () => {
                     className="bg-black/50 border-cyan-500/30 text-white"
                   />
                   <p className="text-sm text-cyan-200/70">
-                    The AI will generate {numQuestions} question options for each section
+                    {hasProcessedData 
+                      ? `AI will select the best ${numQuestions} questions from your question bank for each section`
+                      : `AI will generate ${numQuestions} question options for each section`
+                    }
                   </p>
                 </div>
               </CardContent>

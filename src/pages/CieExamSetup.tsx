@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/ui/use-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Database, Bot } from "lucide-react";
+import { ArrowLeft, Database, Bot, Loader2 } from "lucide-react";
 import { uploadAPI, coursesAPI } from "@/lib/api";
 import NetworkGridBackground from "@/components/NetworkGridBackground";
 import TopicSelector from "@/components/TopicSelector";
@@ -44,16 +44,18 @@ const CieExamSetup = () => {
     examType: string;
     semester: string;
     course: string;
+    courseId?: string;
     hasQuestionBank?: boolean;
   } | null>(null);
   
   const [questionConfigs, setQuestionConfigs] = useState<QuestionConfig[]>([]);
-  const [numQuestions, setNumQuestions] = useState<number>(5); // Default number of questions to generate
+  const [numQuestions, setNumQuestions] = useState<number>(5);
   const [availableTopics, setAvailableTopics] = useState<string[]>([]);
   const [processedTopics, setProcessedTopics] = useState<ProcessedTopic[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourseId, setSelectedCourseId] = useState<string>("");
   const [hasProcessedData, setHasProcessedData] = useState<boolean>(false);
+  const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -61,11 +63,11 @@ const CieExamSetup = () => {
       return;
     }
     
-    // Get data passed from the previous page
     const state = location.state as {
       examType: string;
       semester: string;
       course: string;
+      courseId?: string;
       hasQuestionBank?: boolean;
     } | null;
     
@@ -81,45 +83,63 @@ const CieExamSetup = () => {
     
     setExamConfig(state);
     
-    // Fetch courses and then load processed data
-    fetchCourses().then(() => {
-      loadProcessedData(state.course);
-    });
-    
-    // Initialize question configurations with default values and topic fields
+    // Initialize question configurations
     initializeQuestionConfigs();
+    
+    // Load data
+    loadInitialData(state);
   }, [isAuthenticated, location.state, navigate, toast]);
 
-  const fetchCourses = async () => {
+  const loadInitialData = async (state: any) => {
     try {
-      const response = await coursesAPI.getAllCourses();
-      setCourses(response.data);
+      setIsLoadingData(true);
+      
+      // First fetch courses
+      const coursesResponse = await coursesAPI.getAllCourses();
+      setCourses(coursesResponse.data);
+      
+      // Find the course ID
+      let courseId = state.courseId;
+      if (!courseId && state.course) {
+        const course = coursesResponse.data.find((c: Course) => c.code === state.course);
+        courseId = course?._id;
+      }
+      
+      if (courseId) {
+        setSelectedCourseId(courseId);
+        
+        // Load processed data for this course
+        await loadProcessedData(courseId);
+      } else {
+        console.log("No course ID found");
+        setHasProcessedData(false);
+        setDefaultTopics();
+      }
     } catch (error) {
-      console.error("Failed to fetch courses:", error);
+      console.error("Error loading initial data:", error);
+      setHasProcessedData(false);
+      setDefaultTopics();
+    } finally {
+      setIsLoadingData(false);
     }
   };
 
-  const loadProcessedData = async (courseCode: string) => {
+  const loadProcessedData = async (courseId: string) => {
     try {
-      // Find course by code
-      const course = courses.find(c => c.code === courseCode);
-      if (!course) {
-        // If courses not loaded yet, wait and try again
-        setTimeout(() => loadProcessedData(courseCode), 500);
-        return;
-      }
+      console.log("Loading processed data for course:", courseId);
       
-      setSelectedCourseId(course._id);
-      
-      // Try to get processed data for this course
-      const response = await uploadAPI.getProcessedData(course._id);
+      const response = await uploadAPI.getProcessedData(courseId);
       
       if (response.data && response.data.questions.length > 0) {
+        console.log("Processed data found:", response.data);
+        
         setHasProcessedData(true);
         setProcessedTopics(response.data.topics || []);
         
         // Extract unique topics from processed data
-        const topics = response.data.topics.map((t: ProcessedTopic) => t.topic);
+        const topics = response.data.topics ? response.data.topics.map((t: ProcessedTopic) => t.topic) : [];
+        console.log("Extracted topics:", topics);
+        
         setAvailableTopics(topics);
         
         toast({
@@ -127,34 +147,30 @@ const CieExamSetup = () => {
           description: `Found ${response.data.questions.length} questions and ${topics.length} topics`,
         });
       } else {
+        console.log("No processed data found");
         setHasProcessedData(false);
-        // Use default topics if no processed data
-        setAvailableTopics([
-          "Introduction to Operating Systems",
-          "Process Management",
-          "Memory Management", 
-          "File Systems",
-          "I/O Systems",
-          "Virtualization",
-          "Distributed Systems",
-          "Security and Protection"
-        ]);
+        setDefaultTopics();
       }
     } catch (error) {
       console.error("Error loading processed data:", error);
       setHasProcessedData(false);
-      // Use default topics
-      setAvailableTopics([
-        "Introduction to Operating Systems",
-        "Process Management",
-        "Memory Management",
-        "File Systems", 
-        "I/O Systems",
-        "Virtualization",
-        "Distributed Systems",
-        "Security and Protection"
-      ]);
+      setDefaultTopics();
     }
+  };
+
+  const setDefaultTopics = () => {
+    const defaultTopics = [
+      "Introduction to Operating Systems",
+      "Process Management",
+      "Memory Management", 
+      "File Systems",
+      "I/O Systems",
+      "Virtualization",
+      "Distributed Systems",
+      "Security and Protection"
+    ];
+    console.log("Setting default topics:", defaultTopics);
+    setAvailableTopics(defaultTopics);
   };
 
   const initializeQuestionConfigs = () => {
@@ -166,7 +182,7 @@ const CieExamSetup = () => {
         initialConfigs.push({
           questionId: `${section}${part}`,
           level: part === 'c' ? "hard" : "medium",
-          marks: 5,
+          marks: 5, // 5 marks each: a=5, b=5, c=5 = 15 total
           includeC: part !== 'c', // 'c' parts are optional by default
           topic: ""
         });
@@ -211,20 +227,18 @@ const CieExamSetup = () => {
   };
 
   const handleSubmit = () => {
-    // Validate total marks per section
+    // Validation logic remains the same
     const sections = ["1", "2", "3"];
     
     for (const section of sections) {
       const sectionQuestions = questionConfigs.filter(q => q.questionId.startsWith(section));
       const sectionMarks = sectionQuestions.reduce((sum, q) => {
-        // Only count marks for questions that will be included
         if (q.questionId.endsWith('c') && !q.includeC) {
           return sum;
         }
         return sum + q.marks;
       }, 0);
       
-      // Each section should have a total of 15 marks (for CIE)
       if (sectionMarks !== 15) {
         toast({
           title: "Invalid marks distribution",
@@ -235,7 +249,6 @@ const CieExamSetup = () => {
       }
     }
     
-    // Validate that each active question has a topic selected
     const activeQuestions = questionConfigs.filter(q => !q.questionId.endsWith('c') || q.includeC);
     const missingTopics = activeQuestions.some(q => !q.topic);
     
@@ -248,12 +261,11 @@ const CieExamSetup = () => {
       return;
     }
     
-    // Navigate to question generation page with the configuration
     navigate("/generate-questions", {
       state: {
         examConfig: {
           ...examConfig,
-          courseId: selectedCourseId // Pass the actual course ID
+          courseId: selectedCourseId
         },
         questionConfigs,
         numQuestions,
@@ -281,12 +293,27 @@ const CieExamSetup = () => {
     );
   }
 
+  if (isLoadingData) {
+    return (
+      <NetworkGridBackground>
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="bg-black/40 backdrop-blur-sm p-8 rounded-lg border border-cyan-500/30">
+            <Loader2 className="w-8 h-8 animate-spin text-cyan-400 mx-auto" />
+            <span className="mt-4 block text-white text-center">Loading exam data...</span>
+          </div>
+        </div>
+      </NetworkGridBackground>
+    );
+  }
+
   // Group questions by section for easier rendering
   const sections = [
     questionConfigs.filter(q => q.questionId.startsWith('1')),
     questionConfigs.filter(q => q.questionId.startsWith('2')),
     questionConfigs.filter(q => q.questionId.startsWith('3')),
   ];
+
+  console.log("Available topics in render:", availableTopics);
 
   return (
     <NetworkGridBackground>
@@ -323,7 +350,6 @@ const CieExamSetup = () => {
                   </div>
                 </div>
                 
-                {/* Data Source Information */}
                 <div className="mt-4 p-3 rounded-md border">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
@@ -341,8 +367,8 @@ const CieExamSetup = () => {
                     </div>
                     <p className="text-sm text-cyan-200">
                       {hasProcessedData 
-                        ? `${processedTopics.length} topics from your question bank`
-                        : "Questions will be generated using AI"
+                        ? `${availableTopics.length} topics from your question bank`
+                        : "Questions will be generated using AI with default topics"
                       }
                     </p>
                   </div>
@@ -354,6 +380,15 @@ const CieExamSetup = () => {
                       </AlertDescription>
                     </Alert>
                   )}
+                </div>
+
+                {/* Debug Information - Remove in production */}
+                <div className="mt-4 p-3 bg-yellow-900/20 border border-yellow-500/30 rounded-md">
+                  <p className="text-yellow-100 text-sm">
+                    <strong>Debug Info:</strong> Available topics count: {availableTopics.length}
+                    <br />
+                    Topics: {availableTopics.join(", ")}
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -379,7 +414,7 @@ const CieExamSetup = () => {
                                   topics={availableTopics}
                                   selectedTopic={question.topic}
                                   onChange={(topic) => handleTopicChange(question.questionId, topic)}
-                                  placeholder="Select topic for this question"
+                                  placeholder={availableTopics.length > 0 ? "Select topic for this question" : "No topics available"}
                                 />
                               </div>
                               
