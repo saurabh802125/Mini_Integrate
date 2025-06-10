@@ -209,7 +209,8 @@ const Register = () => {
                       </SelectTrigger>
                       <SelectContent className="bg-slate-800 text-white border-slate-700">
                         <SelectItem value="Computer Science">Computer Science</SelectItem>
-                        <SelectItem value="Information Technology">Information Technology</SelectItem>
+                        <SelectItem value="Computer Science(Ai & ML)">Computer Science(Ai & ML)</SelectItem>
+                        <SelectItem value="Information Science Engineering">Information Technology</SelectItem>
                         <SelectItem value="Electronics">Electronics</SelectItem>
                         <SelectItem value="Mechanical">Mechanical</SelectItem>
                         <SelectItem value="Civil">Civil</SelectItem>

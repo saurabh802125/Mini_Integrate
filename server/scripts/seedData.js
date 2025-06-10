@@ -1,32 +1,42 @@
-
 require('dotenv').config({ path: '../.env' });
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
 const Course = require('../models/Course');
-const Educator = require('../models/Educator');
 
-// Sample data
 const courses = [
   {
     name: 'Data Structures and Algorithms',
-    code: 'CS201',
+    code: 'CI201',
     department: 'Computer Science',
     credits: 4,
     description: 'Fundamentals of data structures and algorithms design and analysis.'
   },
   {
     name: 'Database Management Systems',
-    code: 'CS301',
+    code: 'CI301',
     department: 'Computer Science',
     credits: 3,
     description: 'Introduction to database concepts, design, and implementation.'
   },
   {
     name: 'Artificial Intelligence',
-    code: 'CS401',
+    code: 'CI401',
     department: 'Computer Science',
     credits: 4,
     description: 'Foundations of AI including search, knowledge representation, and machine learning.'
+  },
+  {
+    name: 'Operating System',
+    code: 'CI402',
+    department: 'Computer Science',
+    credits: 4,
+    description: 'Process management, memory, scheduling, and file systems.'
+  },
+  {
+    name: 'Advanced Computer Networks',
+    code: 'CI501',
+    department: 'Computer Science',
+    credits: 4,
+    description: 'Advanced routing, switching, and network protocols.'
   },
   {
     name: 'Linear Algebra',
@@ -43,12 +53,13 @@ const courses = [
     description: 'Introduction to digital systems, combinational and sequential circuits.'
   }
 ];
+
 mongoose
-  .connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(async () => {
     console.log("✅ MongoDB Connected");
-    await Course.deleteMany(); // Clear previous courses
-    await Course.insertMany(courses);
+    await Course.deleteMany(); // Remove old data
+    await Course.insertMany(courses); // Add new data
     console.log("✅ Courses Seeded Successfully");
     mongoose.connection.close();
   })
@@ -56,8 +67,3 @@ mongoose
     console.error("❌ MongoDB Connection Error:", err);
     mongoose.connection.close();
   });
-
-
-
-
-
